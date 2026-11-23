@@ -24,7 +24,7 @@ check('both channels and closed production gates', () => {
 check('capability and navigation gates are explicit', () => {
   assert.match(main, /isFeatureSupported\(WebViewFeature.MULTI_PROFILE\)/);
   assert.match(gate, /isFeatureSupported\(WebViewFeature.PROXY_OVERRIDE\)/);
-  assert.match(main, /check\(profilesReady && gate.ready\)/);
+  assert.match(main, /check\(canOpen\(account\)\)/);
   assert.match(main, /blockNetworkLoads = true/);
   assert.doesNotMatch(main, /CookieManager\.getInstance|loadDataWithBaseURL|addJavascriptInterface/);
 });
@@ -40,6 +40,15 @@ check('WebViews and popup callbacks are scoped by account and tab', () => {
   assert.match(main, /views\[account to selected.id\]/);
   assert.match(main, /it.popup && views\[account to it.id\] === window/);
   assert.match(main, /sessions.selected\[account\] == closed.id/);
+});
+check('cleanup is profile-scoped and blocks navigation until the completion callback', () => {
+  assert.match(main, /isFeatureSupported\(WebViewFeature.DELETE_BROWSING_DATA\)/);
+  assert.match(main, /gate.ready && !sessions.loginCleanup.isPending\(account\)/);
+  assert.match(main, /views.keys.filter \{ it.first == account \}/);
+  assert.match(main, /closedTabs.clear\(account\)/);
+  assert.match(main, /WebStorageCompat.deleteBrowsingData\(profile.webStorage\)/);
+  assert.match(main, /cleanup.finish\(account, token\)/);
+  assert.doesNotMatch(main, /WebStorage.getInstance|clearCache\(|\.pauseTimers\(/);
 });
 check('proxy has no direct or bypass fallback', () => {
   assert.match(gate, /addProxyRule\("http:\/\/\$host:\$port"\)/);

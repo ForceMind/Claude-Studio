@@ -9,7 +9,16 @@ data class SavedTab(val id: String, var url: String, val popup: Boolean = false)
 
 class SessionStore(context: Context) {
     private val prefs = context.getSharedPreferences("sessions-v1", Context.MODE_PRIVATE)
+    internal val loginCleanup = LoginCleanup({ prefs.getBoolean("cleanup.$it", false) }, { account, pending ->
+        val key = "cleanup.$account"
+        if (!prefs.edit().putBoolean(key, pending).commit()) {
+            if (!pending) prefs.edit().putBoolean(key, true).apply()
+            error("账号清理状态保存失败。")
+        }
+    }, cleanupInFlight)
     val tabs = linkedMapOf("A" to mutableListOf<SavedTab>(), "B" to mutableListOf())
+    var accountOrder: List<String> = tabs.keys.toList()
+        private set
     var activeAccount: String = "A"
     val selected = mutableMapOf<String, String>()
 
@@ -25,6 +34,10 @@ class SessionStore(context: Context) {
             // Never silently replace unreadable user state with empty profiles.
             val root = JSONObject(raw)
             require(root.getInt("schema") == 1) { "不支持的标签资料版本；保留原始资料。" }
+            root.optJSONArray("accountOrder")?.let { order ->
+                val savedOrder = List(order.length()) { order.optString(it) }
+                if (savedOrder.size == tabs.size && savedOrder.toSet() == tabs.keys) accountOrder = savedOrder
+            }
             activeAccount = root.getString("activeAccount").also { require(it in tabs) }
             tabs.forEach { (account, list) ->
                 val array = root.getJSONArray(account)
@@ -43,9 +56,12 @@ class SessionStore(context: Context) {
         }
     }
 
+    fun swapAccounts() { accountOrder = accountOrder.reversed() }
+
     fun save() {
         val root = JSONObject().put("schema", 1).put("activeAccount", activeAccount)
             .put("selected", JSONObject(selected.toMap()))
+            .put("accountOrder", JSONArray(accountOrder))
         tabs.forEach { (account, list) ->
             val values = JSONArray()
             list.forEach { values.put(JSONObject().put("id", it.id).put("url", it.url).put("popup", it.popup)) }
@@ -55,6 +71,7 @@ class SessionStore(context: Context) {
     }
 
     companion object {
+        private val cleanupInFlight = mutableMapOf<String, Any>()
         const val MAX_TABS = 12
         const val HOME = "https://appassets.androidplatform.net/assets/demo.html"
         fun isSyntheticUrl(url: String): Boolean =

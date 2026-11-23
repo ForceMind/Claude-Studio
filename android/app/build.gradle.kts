@@ -10,8 +10,8 @@ android {
         applicationId = "dev.claudestudio.browser"
         minSdk = 28
         targetSdk = 35
-        versionCode = 50001
-        versionName = "0.5.0-prototype.1"
+        versionCode = 50002
+        versionName = "0.5.0-prototype.2"
         // No Play traffic before an approved package, signer and test track exist.
         buildConfigField("boolean", "PLAY_UPDATE_ENABLED", "false")
     }
@@ -39,7 +39,7 @@ android {
 }
 
 dependencies {
-    implementation("androidx.webkit:webkit:1.12.1")
+    implementation("androidx.webkit:webkit:1.13.0")
     "playImplementation"("com.google.android.play:app-update:2.1.0")
     testImplementation("junit:junit:4.13.2")
 }

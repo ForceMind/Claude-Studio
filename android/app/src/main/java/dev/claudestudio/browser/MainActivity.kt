@@ -1,15 +1,19 @@
 package dev.claudestudio.browser
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.os.SystemClock
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -19,10 +23,12 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.webkit.ProfileStore
+import androidx.webkit.WebStorageCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import java.io.ByteArrayInputStream
+import java.lang.ref.WeakReference
 import java.util.UUID
 
 class MainActivity : Activity() {
@@ -30,9 +36,13 @@ class MainActivity : Activity() {
     private val policy = UpdatePolicy(System.currentTimeMillis())
     private val gate = ProxyGate()
     private val views = mutableMapOf<Pair<String, String>, WebView>()
+    private val closedTabs = ClosedTabs(SystemClock::elapsedRealtime, ::destroyView)
+    private val tabExpiry = Runnable { scheduleTabExpiry(); renderTabs() }
     private lateinit var sessions: SessionStore
+    private lateinit var accounts: LinearLayout
     private lateinit var pageHost: LinearLayout
     private lateinit var tabBar: LinearLayout
+    private lateinit var restoreButton: Button
     private lateinit var pageStatus: TextView
     private lateinit var updateStatus: TextView
     private lateinit var updates: UpdateClient
@@ -67,26 +77,101 @@ class MainActivity : Activity() {
             if (profilesReady) gate.apply(host.text.toString(), port.text.toString(),
                 java.util.concurrent.Executor { command -> handler.post(command) }) { pageStatus.text = it }
         }
-        val accounts = row(root)
-        listOf("A", "B").forEach { account -> button(accounts, "账户 $account") {
-            if (profilesReady && gate.ready) {
-                sessions.activeAccount = account; persist(); showSelected()
-            } else pageStatus.text = "需要 MULTI_PROFILE 和已应用的共同代理；未导航。"
-        } }
-        button(accounts, "新合成标签") {
-            if (profilesReady && gate.ready) addTab(sessions.activeAccount, false, true)
-            else pageStatus.text = "尚未满足导航条件。"
+        accounts = row(root)
+        row(root).apply {
+            button(this, "账号设置", ::showAccountSettings)
+            button(this, "关闭标签", ::closeSelectedTab)
+            restoreButton = button(this, "撤销关闭", ::restoreTab).also { it.isEnabled = false }
         }
         tabBar = row(root)
+        tabBar.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) tabBar.post { if (!destroyed) renderTabs() }
+        }
         pageHost = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(pageHost, LinearLayout.LayoutParams(-1, 0, 1f))
         profilesReady = initializeProfiles()
+        renderAccounts()
+        if (profilesReady) sessions.accountOrder.filter(sessions.loginCleanup.isPending).forEach(::clearLogin)
         try {
             connectivity = getSystemService(ConnectivityManager::class.java)
             connectivity?.registerDefaultNetworkCallback(networkCallback)
         } catch (_: RuntimeException) { /* Foreground reconciliation still runs every minute. */ }
         // Each cold launch is a startup check; configuration changes are handled by this Activity.
         policy.open()
+    }
+
+    private fun renderAccounts() {
+        accounts.removeAllViews()
+        val order = if (profilesReady) sessions.accountOrder else listOf("A", "B")
+        order.forEach { account -> button(accounts, "账号 $account") {
+            if (canOpen(account)) {
+                sessions.activeAccount = account
+                if (persist()) showSelected()
+            } else pageStatus.text = if (profilesReady && sessions.loginCleanup.isPending(account))
+                "账号 $account 正在等待清除本机登录。" else "需要多资料能力和已应用的共同代理。"
+        } }
+        button(accounts, "新标签") {
+            if (profilesReady && canOpen(sessions.activeAccount)) addTab(sessions.activeAccount, false, true)
+            else pageStatus.text = "尚未满足导航条件。"
+        }
+    }
+
+    private fun canOpen(account: String): Boolean = profilesReady && gate.ready && !sessions.loginCleanup.isPending(account)
+
+    private fun showAccountSettings() {
+        if (!profilesReady) return
+        val order = sessions.accountOrder
+        val options = (listOf("交换账号顺序") + order.map { "清除账号 $it 的本机登录" }).toTypedArray()
+        AlertDialog.Builder(this).setTitle("账号设置").setItems(options) { _, index ->
+            if (index == 0) {
+                sessions.swapAccounts()
+                if (persist()) renderAccounts()
+            } else {
+                val account = order[index - 1]
+                AlertDialog.Builder(this).setTitle("清除账号 $account 的本机登录？")
+                    .setMessage("该账号的 Cookie、网站存储和缓存将清除，本地草稿可能丢失。已保存的标签地址仍可打开。")
+                    .setNegativeButton("取消", null).setPositiveButton("清除") { _, _ -> clearLogin(account) }.show()
+            }
+        }.show()
+    }
+
+    private fun clearLogin(account: String) {
+        if (!profilesReady || destroyed) return
+        if (!WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
+            pageStatus.text = "当前 WebView 不支持按账号清除本机登录。"
+            return
+        }
+        val cleanup = sessions.loginCleanup
+        val token = try { cleanup.begin(account) } catch (_: RuntimeException) {
+            pageStatus.text = "无法保存清理状态，请重试。"
+            return
+        } ?: return
+        val activity = WeakReference(this)
+        try {
+            val profile = checkNotNull(ProfileStore.getInstance().getProfile(profileName(account)))
+            views.keys.filter { it.first == account }.forEach { key -> views.remove(key)?.let(::destroyView) }
+            closedTabs.clear(account)
+            scheduleTabExpiry()
+            if (sessions.activeAccount == account) renderTabs()
+            pageStatus.text = "正在清除账号 $account 的本机登录。"
+            WebStorageCompat.deleteBrowsingData(profile.webStorage) {
+                val completed = try { cleanup.finish(account, token) } catch (_: RuntimeException) {
+                    activity.get()?.onLoginCleanupFinished(account, false)
+                    return@deleteBrowsingData
+                }
+                if (completed) activity.get()?.onLoginCleanupFinished(account, true)
+            }
+        } catch (_: RuntimeException) {
+            cleanup.fail(account, token)
+            onLoginCleanupFinished(account, false)
+        }
+    }
+
+    private fun onLoginCleanupFinished(account: String, completed: Boolean) {
+        if (destroyed || !profilesReady) return
+        if (completed && sessions.activeAccount == account && canOpen(account)) showSelected()
+        pageStatus.text = if (completed) "已清除账号 $account 的本机登录。"
+            else "账号 $account 的本机登录清理未完成，请在账号设置重试。"
     }
 
     private fun initializeProfiles(): Boolean {
@@ -113,12 +198,14 @@ class MainActivity : Activity() {
         reconcile()
     }
 
-    override fun onStart() { super.onStart(); active = true; reconcile() }
+    override fun onStart() { super.onStart(); active = true; scheduleTabExpiry(); reconcile() }
     override fun onStop() {
         active = false
         handler.removeCallbacks(tick)
         if (profilesReady) {
-            listOf("A", "B").forEach { ProfileStore.getInstance().getProfile(profileName(it))?.cookieManager?.flush() }
+            sessions.accountOrder.filterNot(sessions.loginCleanup.isPending).forEach {
+                ProfileStore.getInstance().getProfile(profileName(it))?.cookieManager?.flush()
+            }
             persist()
         }
         super.onStop()
@@ -127,7 +214,9 @@ class MainActivity : Activity() {
         destroyed = true
         handler.removeCallbacksAndMessages(null)
         try { connectivity?.unregisterNetworkCallback(networkCallback) } catch (_: RuntimeException) { }
-        views.values.forEach { view -> (view.parent as? ViewGroup)?.removeView(view); view.destroy() }
+        closedTabs.clear()
+        views.values.forEach(::destroyView)
+        views.clear()
         updates.close()
         super.onDestroy()
     }
@@ -168,6 +257,7 @@ class MainActivity : Activity() {
     }
 
     private fun addTab(account: String, popup: Boolean, navigate: Boolean): WebView? {
+        if (!canOpen(account)) return null
         val tabs = sessions.tabs.getValue(account)
         if (tabs.size >= SessionStore.MAX_TABS) { pageStatus.text = "每账户最多 12 个合成标签。"; return null }
         val tab = SavedTab(UUID.randomUUID().toString(), SessionStore.HOME, popup)
@@ -181,8 +271,61 @@ class MainActivity : Activity() {
         return view
     }
 
+    private fun closeSelectedTab() {
+        if (!profilesReady) return
+        val account = sessions.activeAccount
+        if (!canOpen(account)) return
+        val tabs = sessions.tabs.getValue(account)
+        val index = tabs.indexOfFirst { it.id == sessions.selected[account] }
+        val tab = tabs.removeAt(index)
+        views.remove(account to tab.id)?.let { page ->
+            if (!tab.popup && tab.url == SessionStore.HOME && page.url == tab.url && page.progress == 100 && tabs.none { it.popup }) {
+                (page.parent as? ViewGroup)?.removeView(page)
+                page.onPause()
+                closedTabs.remember(account, tab, index, page)
+                scheduleTabExpiry()
+            } else destroyView(page)
+        }
+        if (tabs.isEmpty()) tabs += SavedTab(UUID.randomUUID().toString(), SessionStore.HOME)
+        sessions.selected[account] = tabs[minOf(index, tabs.lastIndex)].id
+        if (persist()) showSelected()
+    }
+
+    private fun restoreTab() {
+        if (!profilesReady) return
+        val account = sessions.activeAccount
+        if (!canOpen(account)) return
+        val tabs = sessions.tabs.getValue(account)
+        if (tabs.size >= SessionStore.MAX_TABS) return
+        val entry = closedTabs.take(account) ?: return renderTabs()
+        scheduleTabExpiry()
+        val page = entry.page
+        if (page != null && page.url != entry.tab.url) {
+            destroyView(page)
+            renderTabs()
+            return
+        }
+        tabs.add(entry.index.coerceAtMost(tabs.size), entry.tab)
+        sessions.selected[account] = entry.tab.id
+        if (persist()) {
+            if (page != null) views[account to entry.tab.id] = page
+            showSelected()
+        } else if (page != null) destroyView(page)
+    }
+
+    private fun scheduleTabExpiry() {
+        handler.removeCallbacks(tabExpiry)
+        closedTabs.expire()
+        closedTabs.nextExpiry()?.let { handler.postDelayed(tabExpiry, (it - SystemClock.elapsedRealtime()).coerceAtLeast(1)) }
+    }
+
+    private fun destroyView(view: WebView) {
+        (view.parent as? ViewGroup)?.removeView(view)
+        view.destroy()
+    }
+
     private fun createView(account: String, tab: SavedTab): WebView {
-        check(profilesReady && gate.ready)
+        check(canOpen(account))
         return views.getOrPut(account to tab.id) {
             WebView(this).also { web ->
                 // MUST be the first operation after construction, including popup transport WebViews.
@@ -200,8 +343,22 @@ class MainActivity : Activity() {
                 val loader = WebViewAssetLoader.Builder().addPathHandler("/assets/",
                     WebViewAssetLoader.AssetsPathHandler(this)).build()
                 web.webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-                        !gate.ready || !SessionStore.isSyntheticUrl(request.url.toString())
+                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                        if (views[account to tab.id] !== view && request.isForMainFrame) discardClosedNavigation(account, tab.id, view)
+                        return views[account to tab.id] !== view || !canOpen(account) || !SessionStore.isSyntheticUrl(request.url.toString())
+                    }
+                    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                        if (views[account to tab.id] !== view) discardClosedNavigation(account, tab.id, view)
+                    }
+                    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                        val key = account to tab.id
+                        if (views[key] === view) {
+                            views.remove(key)
+                            destroyView(view)
+                            if (sessions.activeAccount == account) pageStatus.text = "网页进程已退出，请重新选择标签。"
+                        } else closedTabs.discard(account, tab.id, view)
+                        return true
+                    }
                     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                         if (gate.ready && SessionStore.isSyntheticUrl(request.url.toString())) {
                             loader.shouldInterceptRequest(request.url)?.let { return it }
@@ -219,7 +376,7 @@ class MainActivity : Activity() {
                 }
                 web.webChromeClient = object : WebChromeClient() {
                     override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
-                        if (!isUserGesture || !profilesReady || !gate.ready || sessions.activeAccount != account ||
+                        if (!isUserGesture || !canOpen(account) || sessions.activeAccount != account ||
                             sessions.selected[account] != tab.id || views[account to tab.id] !== view) return false
                         val child = addTab(account, true, false) ?: return false
                         val transport = resultMsg.obj as WebView.WebViewTransport
@@ -245,8 +402,17 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun discardClosedNavigation(account: String, tab: String, view: WebView) {
+        handler.post {
+            if (closedTabs.discard(account, tab, view)) {
+                scheduleTabExpiry()
+                renderTabs()
+            }
+        }
+    }
+
     private fun showSelected(navigate: Boolean = true) {
-        if (!profilesReady || !gate.ready) return
+        if (!profilesReady || !canOpen(sessions.activeAccount)) return
         val account = sessions.activeAccount
         val list = sessions.tabs.getValue(account)
         val selected = list.first { it.id == sessions.selected[account] }
@@ -255,12 +421,49 @@ class MainActivity : Activity() {
         pageHost.removeAllViews()
         (web.parent as? ViewGroup)?.removeView(web)
         pageHost.addView(web, LinearLayout.LayoutParams(-1, -1))
-        tabBar.removeAllViews()
-        list.forEachIndexed { index, tab -> button(tabBar, "$account ${index + 1}${if (tab.popup) " 弹窗" else ""}") {
-            sessions.selected[account] = tab.id; persist(); showSelected()
-        } }
+        web.onResume()
+        renderTabs()
         pageStatus.text = "账户 $account · ${if (selected.popup) "合成弹窗" else "合成标签"} · ${selected.url}"
         if (navigate && existing == null) web.loadUrl(selected.url)
+    }
+
+    private fun renderTabs() {
+        tabBar.removeAllViews()
+        restoreButton.isEnabled = false
+        if (!profilesReady || !canOpen(sessions.activeAccount)) return
+        val account = sessions.activeAccount
+        val tabs = sessions.tabs.getValue(account)
+        restoreButton.isEnabled = tabs.size < SessionStore.MAX_TABS && closedTabs.has(account)
+        val selected = tabs.indexOfFirst { it.id == sessions.selected[account] }
+        val slotWidth = (84 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        val inline = visibleTabIndices(tabs.size, selected, tabBar.width / slotWidth)
+        val hidden = tabs.indices.filterNot { it in inline }
+        fun label(index: Int) = "$account ${index + 1}${if (tabs[index].popup) " 弹窗" else ""}"
+        fun choose(id: String) {
+            if (canOpen(account) && sessions.activeAccount == account && tabs.any { it.id == id }) {
+                sessions.selected[account] = id
+                if (persist()) showSelected()
+            }
+        }
+        inline.forEach { index ->
+            val id = tabs[index].id
+            tabButton(label(index)) { choose(id) }.isEnabled = index != selected
+        }
+        if (hidden.isNotEmpty()) {
+            val labels = hidden.map(::label).toTypedArray()
+            val ids = hidden.map { tabs[it].id }
+            tabButton("更多") {
+                AlertDialog.Builder(this).setTitle("账号 $account 的其他标签")
+                    .setItems(labels) { _, index -> choose(ids[index]) }.show()
+            }
+        }
+    }
+
+    private fun tabButton(label: String, action: () -> Unit): Button = button(tabBar, label, action).also {
+        it.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        it.minWidth = 0
+        it.minimumWidth = 0
+        it.setPadding(0, it.paddingTop, 0, it.paddingBottom)
     }
     private fun persist(): Boolean = try { sessions.save(); true } catch (_: Exception) {
         profilesReady = false
