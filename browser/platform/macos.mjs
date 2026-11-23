@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { releaseFuses } from '../update/desktop-policy.mjs';
@@ -133,7 +133,13 @@ export async function buildMacPackages(options = {}) {
   const plan = createMacBuildPlan({ ...options, env: process.env });
   if (options.production && plan.mode !== 'notarized') throw new Error('生产更新包需要显式公证模式。');
   const { Arch, Platform, build } = await import('electron-builder');
-  const config = { ...plan.config };
+  const projectDir = path.resolve(options.projectDir);
+  const resources = path.join(projectDir, '.build-temp');
+  await mkdir(resources, { recursive: true });
+  const icon = path.join(resources, 'mac-icon.png');
+  await run('/usr/bin/sips', ['--resampleHeightWidth', '512', '512',
+    path.join(projectDir, plan.config.mac.icon), '--out', icon]);
+  const config = { ...plan.config, mac: { ...plan.config.mac, icon } };
   if (options.production) config.electronFuses = releaseFuses;
   const verifiedArchitectures = new Set();
   if (plan.mode !== 'local') {
@@ -151,7 +157,7 @@ export async function buildMacPackages(options = {}) {
     };
   }
   const artifacts = await build({
-    projectDir: path.resolve(options.projectDir),
+    projectDir,
     config,
     targets: Platform.MAC.createTarget(outputFormat, ...plan.architectures.map(arch => Arch[arch])),
     publish: 'never'
@@ -162,7 +168,7 @@ export async function buildMacPackages(options = {}) {
       && plan.architectures.some(arch => !verifiedArchitectures.has(Arch[arch]))) {
     throw new Error('macOS 正式构建有架构未完成签名/公证验证；禁止发布本批产物。');
   }
-  const verifiedFiles = await getMacBuildArtifacts(options.projectDir, plan, artifacts);
+  const verifiedFiles = await getMacBuildArtifacts(projectDir, plan, artifacts);
   for (const file of verifiedFiles) {
     if (path.extname(file) === '.dmg') {
       await run('/usr/bin/hdiutil', ['verify', file]);
