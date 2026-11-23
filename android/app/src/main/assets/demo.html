@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; worker-src 'none'; frame-src 'none'; form-action 'none'">
+<title>合成账号资料</title><style>body{font:18px sans-serif;padding:16px}button{padding:12px;margin:8px}output{display:block;overflow-wrap:anywhere}</style>
+<h1>合成账号资料</h1><p>本页属于应用内资源，不访问 Claude、邮箱或其他真实站点。请分别在 A、B 中写入不同标记，然后重开原型检查。</p>
+<button id="set">写入随机合成 Cookie 和资料</button><button id="popup">打开同账户合成登录弹窗</button><output id="state"></output>
+<script>
+function refresh(){document.querySelector('#state').textContent='Cookie: '+document.cookie+' | localStorage: '+localStorage.getItem('synthetic-account');}
+document.querySelector('#set').onclick=()=>{const marker='synthetic-'+Math.random().toString(36).slice(2);document.cookie='synthetic-account='+marker+'; Max-Age=31536000; Path=/; Secure; SameSite=Lax';localStorage.setItem('synthetic-account',marker);refresh();};
+document.querySelector('#popup').onclick=()=>window.open('https://appassets.androidplatform.net/assets/popup.html','_blank');
+window.addEventListener('focus',refresh);refresh();
+</script></html>

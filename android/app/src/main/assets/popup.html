@@ -1,0 +1,6 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; worker-src 'none'; frame-src 'none'; form-action 'none'">
+<title>合成登录弹窗</title><style>body{font:18px sans-serif;padding:16px}output{overflow-wrap:anywhere}</style>
+<h1>合成登录弹窗</h1><p>只显示同一 Profile 的合成标记；不进行真实认证。</p><output id="state"></output><p><button onclick="window.close()">关闭合成弹窗</button></p>
+<script>document.querySelector('#state').textContent='Cookie: '+document.cookie+' | localStorage: '+localStorage.getItem('synthetic-account')+' | opener: '+Boolean(window.opener);</script></html>

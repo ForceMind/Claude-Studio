@@ -1,0 +1,157 @@
+name: Claude Browser platform builds
+
+'on':
+  push:
+    branches: [claude-browser-platform-ci]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: claude-browser-platform-${{ github.ref }}
+
+jobs:
+  macos:
+    name: macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+            mach: arm64
+          - arch: x64
+            runner: macos-15-intel
+            mach: x86_64
+    env:
+      MAC_ARCH: ${{ matrix.arch }}
+      MACH_ARCH: ${{ matrix.mach }}
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.18.0
+          package-manager-cache: false
+      - name: Test and package
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -m)" = "$MACH_ARCH"
+          npm ci
+          npm run setup
+          npm run typecheck
+          npm test
+          npm run build:mac -- "--mac-arch=$MAC_ARCH"
+      - name: Verify applications in DMG and ZIP
+        run: |
+          version=$(node -p "require('./package.json').version")
+          name="ClaudeBrowser-$version-mac-$MAC_ARCH"
+          stage="$RUNNER_TEMP/claude-macos"
+          mkdir -p "$stage/zip" "$stage/mount" "$stage/upload"
+          verify_app() {
+            local info="$1/Contents/Info.plist"
+            test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info")" = com.claudestudio.browser
+            test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$info")" = "$version"
+            local executable
+            executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info")
+            test "$(xcrun lipo -archs "$1/Contents/MacOS/$executable")" = "$MACH_ARCH"
+          }
+          ditto -x -k "release/macos/local/$name.zip" "$stage/zip"
+          verify_app "$stage/zip/Claude Browser.app"
+          hdiutil attach "release/macos/local/$name.dmg" -readonly -nobrowse -noautoopen -mountpoint "$stage/mount"
+          trap 'hdiutil detach "$stage/mount"' EXIT
+          verify_app "$stage/mount/Claude Browser.app"
+          hdiutil detach "$stage/mount"
+          trap - EXIT
+          cp "release/macos/local/$name.dmg" "release/macos/local/$name.zip" "$stage/upload/"
+          cd "$stage/upload"
+          printf '%s\n' "$GITHUB_SHA" > COMMIT.txt
+          shasum -a 256 "$name.dmg" "$name.zip" | tee SHA256SUMS.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: macos-${{ matrix.arch }}-local-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/claude-macos/upload/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  android:
+    name: Android website and Play Debug
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.18.0
+          package-manager-cache: false
+      - name: Prepare Gradle and Android SDK
+        run: |
+          curl --fail --show-error --silent --location --retry 3 --proto '=https' --proto-redir '=https' \
+            https://services.gradle.org/distributions/gradle-8.11.1-bin.zip -o "$RUNNER_TEMP/gradle.zip"
+          printf '%s  %s\n' f397b287023acdba1e9f6fc5ea72d22dd63669d59ed4a289a29b1a76eee151c6 "$RUNNER_TEMP/gradle.zip" | sha256sum --check
+          unzip -q "$RUNNER_TEMP/gradle.zip" -d "$RUNNER_TEMP/gradle"
+          echo "$RUNNER_TEMP/gradle/gradle-8.11.1/bin" >> "$GITHUB_PATH"
+          sdkmanager --sdk_root="$ANDROID_HOME" 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Test, lint and assemble both flavors
+        working-directory: android
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          node scripts/static-check.cjs
+          gradle --no-daemon :app:testWebsiteDebugUnitTest :app:testPlayDebugUnitTest \
+            :app:lintWebsiteDebug :app:lintPlayDebug :app:assembleWebsiteDebug :app:assemblePlayDebug
+      - name: Verify APK identities, signatures and test reports
+        working-directory: android
+        run: |
+          output="$RUNNER_TEMP/claude-android"
+          tools="$ANDROID_HOME/build-tools/35.0.0"
+          mkdir -p "$output"
+          for flavor in website play; do
+            apk="app/build/outputs/apk/$flavor/debug/app-$flavor-debug.apk"
+            "$tools/apksigner" verify --verbose --print-certs "$apk" | tee "$output/$flavor-signing.txt"
+            grep -q '^Signer #1 certificate SHA-256 digest: ' "$output/$flavor-signing.txt"
+            "$tools/aapt" dump badging "$apk" > "$output/$flavor-package.txt"
+            grep -Fq "package: name='dev.claudestudio.browser.$flavor.debug'" "$output/$flavor-package.txt"
+            cp "$apk" "$output/"
+          done
+          python3 - "$output" <<'PY'
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as xml
+
+          output = Path(sys.argv[1])
+          for flavor in ('Website', 'Play'):
+              reports = Path(f'app/build/test-results/test{flavor}DebugUnitTest')
+              suites = [xml.parse(file).getroot() for file in reports.glob('TEST-*.xml')]
+              counts = {key: sum(int(suite.get(key, '0')) for suite in suites)
+                        for key in ('tests', 'skipped', 'failures', 'errors')}
+              if counts['tests'] <= counts['skipped'] or counts['failures'] or counts['errors']:
+                  raise SystemExit(f'{flavor} Debug test evidence failed verification: {counts}')
+              evidence = f'{flavor} Debug: {counts}\n'
+              (output / f'{flavor.lower()}-tests.txt').write_text(evidence, encoding='utf-8')
+              print(evidence, end='')
+          PY
+          cd "$output"
+          printf '%s\n' "$GITHUB_SHA" > COMMIT.txt
+          sha256sum app-website-debug.apk app-play-debug.apk | tee SHA256SUMS.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: android-debug-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/claude-android/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

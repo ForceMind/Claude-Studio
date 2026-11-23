@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'">
+  <title>Claude Browser 更新检查预览</title>
+  <style>
+    body { margin: 0; background: #f9f7f4; color: #322822; font: 14px "Microsoft YaHei UI", sans-serif; }
+    main { max-width: 500px; padding: 28px; margin: auto; }
+    header { display: flex; gap: 12px; align-items: center; }
+    h1 { margin: 0; font-size: 21px; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 20px 0; }
+    dt, #detail, footer { color: #6d5c52; }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    section { border: 1px solid #dfd5ca; padding: 14px; border-radius: 10px; background: #fff; }
+    p { margin: 0; overflow-wrap: anywhere; }
+    #detail { margin-top: 5px; font-size: 12px; }
+    footer { margin-top: 16px; font-size: 12px; }
+  </style>
+  <script defer src="./update-preview.js"></script>
+</head>
+<body>
+  <main>
+    <header><img src="./icon.png" alt="" width="34" height="34"><h1>更新检查预览</h1></header>
+    <dl>
+      <dt>当前版本</dt><dd id="version">—</dd>
+      <dt>更新源</dt><dd id="source">—</dd>
+    </dl>
+    <section role="status" aria-live="polite">
+      <p id="result">正在初始化检查…</p>
+      <p id="detail"></p>
+    </section>
+    <footer>每次打开和持续运行时的北京时间 12:00 自动检查。此预览只检查版本。</footer>
+  </main>
+</body>
+</html>

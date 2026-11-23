@@ -1,0 +1,72 @@
+{
+  "name": "claude-studio-browser",
+  "productName": "Claude Browser",
+  "version": "0.5.0",
+  "description": "Desktop browser shell for Claude account spaces",
+  "private": true,
+  "type": "module",
+  "main": "dist-app/main.cjs",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node browser/build.mjs && electron .",
+    "build": "node browser/build.mjs --package",
+    "build:mac": "node browser/build.mjs --package --mac",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test browser/tests/*.test.mjs",
+    "verify:package": "node browser/verify-package.mjs",
+    "setup": "install-electron"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "electron": "45.4.1",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "typescript": "~5.9.3",
+    "@electron/asar": "3.4.1",
+    "resedit": "1.7.2"
+  },
+  "build": {
+    "appId": "com.claudestudio.browser",
+    "productName": "Claude Browser",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist-app/**/*",
+      "package.json",
+      "LICENSE"
+    ],
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "executableName": "ClaudeBrowser",
+      "signExecutable": false,
+      "icon": "browser/assets/icon.ico"
+    },
+    "portable": {
+      "artifactName": "ClaudeBrowser.exe",
+      "unpackDirName": true
+    },
+    "toolsets": {
+      "nsis": "1.2.1"
+    },
+    "nsis": {
+      "packElevateHelper": false
+    }
+  }
+}
