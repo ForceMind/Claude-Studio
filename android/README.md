@@ -1,6 +1,6 @@
 # Claude Browser Android 合成原型
 
-本目录是独立 Kotlin / 系统 WebView 合成原型，版本 `0.5.0-prototype.1`（`versionCode=50001`）。移植以 Windows 0.5.0 源码快照的账号和标签边界为基线。此前九项静态检查通过。后续构建和测试在 GitHub Actions 托管 runner 执行，首个远端 Debug APK、Kotlin 单元测试、设备 WebView 和真实站点验收均待验证。
+本目录是独立 Kotlin / 系统 WebView 合成原型，版本 `0.5.0-prototype.1`（`versionCode=50001`）。移植以 Windows 0.5.0 源码快照的账号和标签边界为基线。GitHub Actions 已完成官网和 Play 两个 Debug 包的构建、lint 和签名校验，9 项静态检查和每渠道各 10 项 JVM 测试通过。两个测试 APK 和 SHA-256 见 [Actions 产物](https://github.com/ForceMind/Claude-Studio/actions/runs/45196310481/artifacts/14828327389)。设备 WebView 和真实站点仍待验收。
 
 ## 已实现的入口
 
