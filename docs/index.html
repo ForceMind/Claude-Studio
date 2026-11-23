@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#fbf7f2">
+  <meta name="description" content="Claude Browser 是 Windows 桌面浏览器，在同一窗口切换两个账户，查看各自的代理状态、出口、网页语言和时区。">
+  <title>Claude Browser · Windows 双账户浏览器</title>
+  <link rel="icon" href="./assets/icon.png" type="image/png">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./demo.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">跳到内容</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#top">
+        <img src="./assets/icon.png" width="44" height="44" alt="">
+        <span>Claude Browser</span>
+      </a>
+      <nav aria-label="网站导航">
+        <a href="#demo">账户演示</a>
+        <a href="#windows">Windows 版</a>
+        <a class="nav-github" href="https://github.com/ForceMind/Claude-Studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="content">
+    <section class="container hero" id="top" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="platform">WINDOWS 桌面浏览器</p>
+        <h1 id="hero-title">两个账户，<br><em>一个窗口。</em></h1>
+        <p class="hero-description">在同一个浏览器里切换账户 A 和 B。各自保留登录和标签，代理状态、出口 IP、网页语言和时区集中显示。</p>
+        <div class="hero-actions">
+          <a class="button primary" href="#demo">试试账户切换</a>
+          <a class="button secondary" href="#windows">了解 Windows 版</a>
+        </div>
+      </div>
+
+      <figure class="demo" id="demo" aria-labelledby="demo-caption">
+        <div class="demo-frame">
+          <div class="window-tabs">
+            <img src="./assets/icon.png" width="24" height="24" alt="">
+            <span class="window-tab active">Claude</span>
+            <span class="window-tab">邮箱</span>
+            <span class="window-decoration" aria-hidden="true">− □ ×</span>
+          </div>
+          <div class="window-toolbar">
+            <span class="address-icon" aria-hidden="true"></span>
+            <span class="window-address">claude.ai</span>
+            <span id="toolbar-account" class="toolbar-account">账户 A</span>
+          </div>
+          <div class="demo-body">
+            <div class="demo-workspace">
+              <img src="./assets/icon.png" alt="" width="56" height="56">
+              <h2 id="workspace-title">账户 A 的空间</h2>
+              <p>标签和登录会话随账户切换。</p>
+              <ul class="workspace-tabs" aria-label="示例标签">
+                <li><span class="workspace-mark" aria-hidden="true"></span>Claude</li>
+                <li><span class="workspace-mark mail" aria-hidden="true"></span>邮箱</li>
+              </ul>
+            </div>
+
+            <section class="demo-environment" aria-labelledby="environment-title">
+              <h2 id="environment-title">账户环境</h2>
+              <div class="account-switch" role="group" aria-label="切换示例账户">
+                <button type="button" data-account="A" aria-pressed="true" aria-label="示例账户 A"><span>A</span>账户 A</button>
+                <button type="button" data-account="B" aria-pressed="false" aria-label="示例账户 B"><span>B</span>账户 B</button>
+              </div>
+              <dl>
+                <div><dt>代理状态</dt><dd><span class="status">端口可连接</span></dd></div>
+                <div><dt>实际出口</dt><dd id="demo-exit">尚未检测</dd></div>
+                <div><dt>网页语言</dt><dd id="demo-language">zh-CN</dd></div>
+                <div><dt>时区</dt><dd id="demo-zone">Asia/Shanghai</dd></div>
+              </dl>
+              <button class="demo-check" id="demo-check" type="button">演示检测</button>
+              <div class="sr-only" id="demo-announcement" aria-live="polite"></div>
+            </section>
+          </div>
+        </div>
+        <figcaption id="demo-caption">交互演示 · 所有账户与网络数据均为示例</figcaption>
+        <noscript><p class="no-script">启用 JavaScript 可体验切换和检测。</p></noscript>
+      </figure>
+    </section>
+
+    <section class="container features" aria-labelledby="features-title">
+      <h2 id="features-title">主要功能</h2>
+      <div class="feature-grid">
+        <article>
+          <h3>登录与标签各自保留</h3>
+          <p>A、B 使用各自的 Chromium 会话，分别保存网站数据、标签和选中页。</p>
+        </article>
+        <article>
+          <h3>同一处查看账户环境</h3>
+          <p>在右侧环境卡切换账户，查看代理连通状态、网页语言和时区，按需检测出口。</p>
+        </article>
+        <article>
+          <h3>Claude、邮箱和认证</h3>
+          <p>从窗口直接打开 Claude 和已设置的邮箱，认证弹窗沿用打开它的账户会话。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="container" id="windows" aria-labelledby="windows-title">
+      <div class="windows">
+        <div>
+          <p class="platform">WINDOWS X64</p>
+          <h2 id="windows-title">Windows 便携版</h2>
+          <p>在 Windows 双击 ClaudeBrowser.exe，从账户 A 开始。首次使用时填写本机 HTTP 或 mixed 代理端口，并为每个账户配置语言、时区和邮箱。</p>
+        </div>
+        <div class="windows-meta">
+          <span class="version">v0.3.1</span>
+          <span>内置 Electron 与 Chromium</span>
+          <a class="button secondary" href="https://github.com/ForceMind/Claude-Studio">查看 GitHub 项目</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="container site-footer">
+    <span>Claude Browser</span>
+    <a href="https://github.com/ForceMind/Claude-Studio/tree/claude-browser/docs">网站源码</a>
+  </footer>
+</body>
+</html>
