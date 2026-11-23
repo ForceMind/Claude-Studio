@@ -12,25 +12,25 @@ macOS 用户资料默认放在 `~/Library/Application Support/Claude Browser`。
 
 ## Android 系统 WebView
 
-Android 官网和 Play 渠道各自保持包标识、签名及安装来源。现有 Android 产物为两个渠道的合成原型 Debug APK。[Android 工程与设备验收说明](android/README.md)
+Android 官网和 Play 渠道各自保持包标识、签名及安装来源。两个 Debug 渠道已同步 Windows 0.5.0 的账号排序和定向清理、窄屏标签收纳、撤销关闭普通页。当前使用 A/B 合成资料。[Android 工程与设备验收说明](android/README.md)
 
 ## Actions 测试产物
 
-提交 `0c54434f20e7511b98c3a181b2848378b421260e` 的三个作业均通过。Apple Silicon 和 Intel 各通过 67 项非浏览器测试，各有 33 项按平台跳过。Android 两个渠道各通过 10 项 JVM 测试、lint、出包和 Debug APK 签名校验。测试产物保留 7 天。[Actions 运行 45196310481](https://github.com/ForceMind/Claude-Studio/actions/runs/45196310481)
+提交 `d8c22fb8902f870ca051c685a4330682a42a84e8` 的三个作业均通过。Apple Silicon 和 Intel 各通过 67 项非浏览器测试，各有 33 项按平台跳过。Android 两个渠道各通过 15 项 JVM 测试、lint、出包和 Debug APK 签名校验。测试产物保留 7 天。[Actions 运行 45220367140](https://github.com/ForceMind/Claude-Studio/actions/runs/45220367140)
 
 | 构建 | 产物 |
 | --- | --- |
-| macOS Apple Silicon 0.5.0 | [arm64 DMG、ZIP 和 SHA-256](https://github.com/ForceMind/Claude-Studio/actions/runs/45196310481/artifacts/14828701611) |
-| macOS Intel 0.5.0 | [x64 DMG、ZIP 和 SHA-256](https://github.com/ForceMind/Claude-Studio/actions/runs/45196310481/artifacts/14829236769) |
-| Android 0.5.0-prototype.1 | [官网和 Play Debug APK、签名记录、测试结果和 SHA-256](https://github.com/ForceMind/Claude-Studio/actions/runs/45196310481/artifacts/14828327389) |
+| macOS Apple Silicon 0.5.0 | [arm64 DMG、ZIP 和 SHA-256](https://github.com/ForceMind/Claude-Studio/actions/runs/45220367140/artifacts/14840282676) |
+| macOS Intel 0.5.0 | [x64 DMG、ZIP 和 SHA-256](https://github.com/ForceMind/Claude-Studio/actions/runs/45220367140/artifacts/14841065923) |
+| Android 0.5.0-prototype.2 | [官网和 Play Debug APK、签名记录、测试结果和 SHA-256](https://github.com/ForceMind/Claude-Studio/actions/runs/45220367140/artifacts/14840242885) |
 
 ```text
-c5264add16ebe6e9ed338f93e7e20403051e25fd7ceeb73ab418a50c0822b9e8  ClaudeBrowser-0.5.0-mac-arm64.dmg
-19a26a9fd5f350c81be2d56080b89cbb4c7132b4b2e7ce7ab6c4847d2eec4b23  ClaudeBrowser-0.5.0-mac-arm64.zip
-e11f3d9780990dbe6e355bcbe6984078400da76838fc9bfc94df14e7ec60e0ae  ClaudeBrowser-0.5.0-mac-x64.dmg
-ddab08c0707c2d099e921884d70907f4fd8e936a8f94f919d41c525e58158517  ClaudeBrowser-0.5.0-mac-x64.zip
-7712ca63b8c43446d2a8105457704289acf9c38e30a09d8c288473b6e79899a3  app-website-debug.apk
-bba7ce2316d924f6adca20495513e2183f08785cd1812684a9967f382f0cac5c  app-play-debug.apk
+3f4ec83f36aa7f908c1d519cefbeb65bccbc4dc40967a876b564e8c118e9ff7f  ClaudeBrowser-0.5.0-mac-arm64.dmg
+91a87f6185a9b17be13b8641b41e6525fa6a0c32c3275fecd06837b336d07e3a  ClaudeBrowser-0.5.0-mac-arm64.zip
+16f5cfff787e2a5931cdcacfee6fb77ab5b67c60e518dfc69e2e863cea1be258  ClaudeBrowser-0.5.0-mac-x64.dmg
+7db384b78141acc3de513cfa7c64fcd6b92709567d91cf16ac199f541436fb45  ClaudeBrowser-0.5.0-mac-x64.zip
+b78520d554f3f43ffe01b34ec49d543c2142dc2ddff625f0ba34366f88c4d916  app-website-debug.apk
+6319501ab0a060f873a25949ba77a2c665f8da2e10145f322f4922c1c4dbf6f9  app-play-debug.apk
 ```
 
 ## 生产更新策略
