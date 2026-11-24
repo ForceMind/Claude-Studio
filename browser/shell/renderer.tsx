@@ -28,6 +28,7 @@ const paths = {
   tabs: 'M7.25 4H15a1 1 0 0 1 1 1v7.75a1 1 0 0 1-1 1H7.25a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1ZM4 7v8a1 1 0 0 0 1 1h8',
   globe: 'M16.5 10a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0ZM3.5 10h13M10 3.5c3.25 3.4 3.25 9.6 0 13m0-13c-3.25 3.4-3.25 9.6 0 13',
   mail: 'M5 5h10a1.5 1.5 0 0 1 1.5 1.5v7A1.5 1.5 0 0 1 15 15H5a1.5 1.5 0 0 1-1.5-1.5v-7A1.5 1.5 0 0 1 5 5Zm-1 1.75 6 4.4 6-4.4',
+  chevron: 'm5 8 5 5 5-5',
   pin: 'M7 4h6m-5 0v3l-2.5 3v1H14.5v-1L12 7V4m-2 7v5'
 };
 type IconName = keyof typeof paths;
@@ -197,7 +198,7 @@ function SettingsPanel({ state, send }: { state: ShellState; send: (command: Com
         customLabel="自定义 IANA 时区" placeholder="例如 America/Toronto" disabled={saving}/>
     </div>
     <p className="hint">时区选项显示当前 UTC 偏移，网页按当地规则切换夏令时。</p>
-    <PreferenceField key={id + '-mail'} label="邮箱" presets={mailboxOptions} discouraged={chineseMailbox}
+    <PreferenceField key={id + '-mail'} label="此账号的旧邮箱" presets={mailboxOptions} discouraged={chineseMailbox}
       value={form.mail} change={mail => setForm({ ...form, mail })} customLabel="自定义 HTTPS 邮箱主页"
       placeholder="https://" inputType="url" disabled={saving}/>
     {!adding && <p className="hint">更改语言或时区会重新打开该账户的网页。更改代理端口会重新连接所有账号。</p>}
@@ -206,6 +207,84 @@ function SettingsPanel({ state, send }: { state: ShellState; send: (command: Com
         onClick={() => void send({ type: 'settings', open: false })}>取消</button>
       <button type="submit" className="primary" disabled={saving || detecting || managing}>
         {saving ? '保存中' : adding ? '添加账号' : '保存设置'}
+      </button>
+    </div>
+  </form>;
+}
+
+function MailboxSpace({ state, send }: { state: ShellState; send: (command: Command) => Promise<boolean> }) {
+  const [name, setName] = useState('');
+  const [mailAddress, setMailAddress] = useState('');
+  const [url, setURL] = useState(effectiveMailbox(''));
+  const [saving, setSaving] = useState(false);
+  const entries = Object.entries(state.settings.mailboxes);
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    try {
+      await send({ type: 'mailbox-add', owner: state.account, mailbox: { name, address: mailAddress, url } });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <form className="settings-card mailbox-space" onSubmit={submit}>
+    <div className="card-heading">
+      <h1>邮箱空间</h1>
+      <Tool icon="close" label="关闭邮箱空间" disabled={saving} onClick={() => void send({ type: 'mailboxes', open: false })}/>
+    </div>
+    {entries.length > 0 && <div className="mailbox-list" aria-label="已添加的邮箱">
+      {entries.map(([id, mailbox]) => <button className="mailbox-item" type="button" key={id} disabled={saving}
+        onClick={() => void send({ type: 'mailbox-open', owner: state.account, id })}>
+        <Icon name="mail"/><span><strong>{mailbox.name}</strong><small>{mailbox.address}</small></span>
+      </button>)}
+    </div>}
+    <p className="hint">添加后会打开邮箱，请在邮箱网页完成登录。所有 Claude 账号都能选择这个邮箱。</p>
+    <div className="field-pair">
+      <label>邮箱名称<input autoFocus required maxLength={40} value={name} disabled={saving}
+        placeholder="例如：工作邮箱" onChange={event => setName(event.target.value)}/></label>
+      <label>邮箱地址<input required type="email" maxLength={254} value={mailAddress} disabled={saving}
+        placeholder="name@example.com" onChange={event => setMailAddress(event.target.value)}/></label>
+    </div>
+    <PreferenceField label="邮箱服务" presets={mailboxOptions} discouraged={chineseMailbox} value={url} change={setURL}
+      customLabel="自定义 HTTPS 邮箱主页" placeholder="https://" inputType="url" disabled={saving}/>
+    <div className="form-actions"><button type="submit" className="primary" disabled={saving}>
+      {saving ? '添加中…' : '添加邮箱并打开'}
+    </button></div>
+  </form>;
+}
+
+function ClaudeLinkDialog({ state, send }: { state: ShellState; send: (command: Command) => Promise<boolean> }) {
+  const request = state.claudeLink!;
+  const [target, setTarget] = useState(request.source);
+  const [opening, setOpening] = useState(false);
+  const heading = useId();
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (opening) return;
+    setOpening(true);
+    try { await send({ type: 'claude-link', id: request.id, target }); }
+    finally { setOpening(false); }
+  }
+
+  return <form className="settings-card claude-link-dialog" role="dialog" aria-labelledby={heading} onSubmit={submit}>
+    <div className="card-heading"><h1 id={heading}>打开 Claude 链接</h1><span className="hint">claude.ai</span></div>
+    <p className="hint">在哪个账号打开？</p>
+    <div className="mailbox-list" role="group" aria-label="目标 Claude 账号">
+      {Object.entries(state.settings.profiles).map(([id, profile]) => <label className="claude-link-option" key={id}>
+        <input type="radio" name="claude-target" checked={target === id} autoFocus={id === request.source}
+          disabled={opening} onChange={() => setTarget(id)}/>
+        <span>{profileName(id, profile)}</span>{id === request.source && <small>来源账号</small>}
+      </label>)}
+    </div>
+    <div className="form-actions">
+      <button className="secondary" type="button" disabled={opening}
+        onClick={() => void send({ type: 'claude-link', id: request.id })}>取消</button>
+      <button className="primary" type="submit" disabled={opening}>
+        在{profileName(target, state.settings.profiles[target])}打开
       </button>
     </div>
   </form>;
@@ -259,7 +338,7 @@ function EnvironmentCard({ state, environment, send }: {
       <div>
         <dt>代理状态</dt>
         <dd>
-          <span className="proxy-status" data-status={state.status}>{statusText[state.status]}</span>
+          <span className="proxy-status" data-status={environment.status}>{statusText[environment.status]}</span>
           {state.settings.port && <small>127.0.0.1:{state.settings.port}</small>}
         </dd>
       </div>
@@ -285,7 +364,7 @@ function EnvironmentCard({ state, environment, send }: {
       {environment.source === 'page' ? '语言和时区来自当前网页读数。' : '网页读数暂不可用，显示账户设置。'}
     </p>
     <div className="environment-actions">
-      <button type="button" className="primary" disabled={checking || state.status !== 'online'}
+      <button type="button" className="primary" disabled={checking || environment.status !== 'online'}
         onClick={() => void send({ type: 'check-exit', id: state.account })}>
         {checking ? '检测中…' : exit.state === 'checked' ? '重新检测' : '检测出口'}
       </button>
@@ -300,6 +379,8 @@ function App() {
   const [state, setState] = useState<ShellState>();
   const [issue, setIssue] = useState('');
   const addressRef = useRef<HTMLInputElement>(null);
+  const mailButton = useRef<HTMLButtonElement>(null);
+  const firstMailboxAction = useRef<HTMLButtonElement>(null);
   const edit = useRef(false);
   const drag = useRef<string | undefined>(undefined);
   const tabRail = useRef<HTMLDivElement>(null);
@@ -354,6 +435,10 @@ function App() {
     }
   }
 
+  useEffect(() => {
+    if (state?.mailPicker) firstMailboxAction.current?.focus();
+  }, [state?.mailPicker]);
+
   function menu(name: 'app' | 'accounts' | 'tabs', event: MouseEvent<HTMLButtonElement>) {
     const bounds = event.currentTarget.getBoundingClientRect();
     void send({ type: 'menu', menu: name, x: bounds.left, y: bounds.bottom });
@@ -374,7 +459,13 @@ function App() {
   const badge = accountBadge(state.account, currentName);
   const message = issue || state.notice;
   let stage: ReactNode;
-  if (state.panel) {
+  if (state.claudeLink) {
+    stage = <ClaudeLinkDialog key={state.claudeLink.id} state={state} send={send}/>;
+  } else if (state.panel === 'mailboxes') {
+    stage = <MailboxSpace key={state.account} state={state} send={send}/>;
+  } else if (state.mailPicker) {
+    stage = null;
+  } else if (state.panel) {
     stage = <SettingsPanel key={state.account + ':' + state.panel} state={state} send={send}/>;
   } else if (state.status === 'unset') {
     stage = <div className="page-state">
@@ -399,14 +490,26 @@ function App() {
     </div>;
   }
 
-  return <>
+  const mailboxes = Object.entries(state.settings.mailboxes);
+
+  return <div className="shell" onKeyDown={event => {
+    if (event.key !== 'Escape') return;
+    if (state.claudeLink) {
+      event.preventDefault();
+      void send({ type: 'claude-link', id: state.claudeLink.id });
+    } else if (state.mailPicker) {
+      event.preventDefault();
+      void send({ type: 'mail-picker', open: false });
+      mailButton.current?.focus();
+    }
+  }}>
     <header className={state.fullscreen ? 'chrome fullscreen' : 'chrome'}>
       <div className="titlebar">
         <span className="brand"><AppIcon label="Claude Browser"/></span>
         <div className="tab-rail" ref={tabRail}>
           <div className="tabs" role="tablist" aria-label={currentName + ' 的标签页'}>
           {shownTabs.map(tab => {
-            const title = tab.title || (tab.destination === 'mail' ? '邮箱' : tab.destination === 'claude' ?
+            const title = (tab.mailboxId && state.settings.mailboxes[tab.mailboxId]?.name) || tab.title || (tab.destination === 'mail' ? '邮箱' : tab.destination === 'claude' ?
               'Claude' : webURL(tab.url)?.host || '新标签页');
             return <div key={tab.id} className={'tab' + (tab.id === active.id ? ' active' : '') + (tab.pinned ? ' pinned' : '')}
               draggable onContextMenu={event => {
@@ -464,9 +567,30 @@ function App() {
         <button className="destination" onClick={() => void send({ type: 'open', destination: 'claude' })}>
           <AppIcon/>Claude
         </button>
-        <button className="destination" onClick={() => void send({ type: 'open', destination: 'mail' })}>
-          <Icon name="mail"/>邮箱
-        </button>
+        <div className="mail-entry">
+          <button type="button" className="destination" ref={mailButton} aria-expanded={state.mailPicker}
+            aria-controls="mail-picker" onClick={() => void send({ type: 'mail-picker', open: !state.mailPicker })}>
+            <Icon name="mail"/>邮箱<Icon name="chevron"/>
+          </button>
+          {state.mailPicker && <div id="mail-picker" className="mail-picker" role="group" aria-label="从邮箱空间选择邮箱">
+            <strong>从邮箱空间选择</strong>
+            {mailboxes.length === 0 && <p className="hint">添加并登录后，各 Claude 账号都能复用。</p>}
+            <div className="mailbox-list">
+              {mailboxes.map(([id, mailbox], index) => <button className="mailbox-item" type="button" key={id}
+                ref={index === 0 ? firstMailboxAction : undefined}
+                onClick={() => void send({ type: 'mailbox-open', owner: state.account, id })}>
+                <Icon name="mail"/><span><strong>{mailbox.name}</strong><small>{mailbox.address}</small></span>
+              </button>)}
+            </div>
+            <button className="secondary" ref={mailboxes.length === 0 ? firstMailboxAction : undefined} type="button"
+              onClick={() => void send({ type: 'mailboxes', open: true })}>
+              {mailboxes.length === 0 ? '去邮箱空间添加邮箱' : '管理邮箱空间'}
+            </button>
+            <button className="secondary" type="button" onClick={() => void send({ type: 'open', destination: 'mail' })}>
+              此账号的旧邮箱
+            </button>
+          </div>}
+        </div>
         <div className="divider"/>
         <button className="account" aria-expanded={!!state.environment} aria-controls="account-environment"
           aria-label={'账户环境 · ' + currentName} title={currentName + ' · ' + statusText[state.status]}
@@ -479,10 +603,12 @@ function App() {
       {message && <div className="notice" role="alert">{message}</div>}
     </header>
     <main className="stage">
+      {state.mailPicker && <div className="mail-picker-backdrop" aria-hidden="true"
+        onClick={() => void send({ type: 'mail-picker', open: false })}/>}
       <div className="stage-page">{stage}</div>
       {state.environment && <EnvironmentCard state={state} environment={state.environment} send={send}/>}
     </main>
-  </>;
+  </div>;
 }
 
 createRoot(document.getElementById('root')!).render(<App/>);

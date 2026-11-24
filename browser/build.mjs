@@ -12,6 +12,7 @@ const out = path.join(root, 'dist-app');
 const entry = name => path.join(root, 'browser', 'shell', name);
 const packaging = process.argv.includes('--package');
 const installer = process.argv.includes('--installer');
+const checkOnly = process.argv.includes('--check-only');
 const policyArgument = process.argv.find(argument => argument.startsWith('--release-policy='));
 if (packaging && (process.platform !== 'win32' || process.arch !== 'x64')) {
   throw new Error('本项目的 Windows 发布包需要 Windows x64 构建环境。');
@@ -19,7 +20,8 @@ if (packaging && (process.platform !== 'win32' || process.arch !== 'x64')) {
 const verifierFile = path.join(out, 'windows-authenticode.exe');
 let release = null;
 let windowsTarget;
-if (installer && !packaging) throw new Error('安装版目标需要打包。');
+if ((installer || checkOnly) && !packaging) throw new Error('所选目标需要打包。');
+if (checkOnly && policyArgument) throw new Error('本地检查包使用无签名构建。');
 if (policyArgument) {
   if (!packaging) throw new Error('生产更新策略只用于签名打包。');
   const config = normalizeDesktopPolicy(JSON.parse(await readFile(policyArgument.slice('--release-policy='.length), 'utf8')));
@@ -63,7 +65,9 @@ if (packaging) {
   const { Arch, Platform, build: packageApp } = await import('electron-builder');
   const installerMarkerFile = path.join(tempRoot, installedMarker);
   if (installer) await writeFile(installerMarkerFile, 'installed\n');
-  const output = installer ? (release ? 'release/windows/stable/installer' : 'release/windows/installer') :
+  const { version } = JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8'));
+  const output = checkOnly ? path.join('release', 'windows', 'checks', version, installer ? 'installer' : 'portable') :
+    installer ? (release ? 'release/windows/stable/installer' : 'release/windows/installer') :
     (release ? 'release/windows/stable' : 'release');
   await packageApp({ projectDir: root, targets: Platform.WINDOWS.createTarget([installer ? 'nsis' : 'portable'], Arch.x64), publish: 'never',
     config: {
@@ -89,8 +93,8 @@ if (packaging) {
       signerPins: windowsTarget.signerPins, version: windowsTarget.installedVersion, edition: installer ? 'setup' : 'portable' });
     if (result.sha256 !== hash) throw new Error('签名验证的包与已解包验证的文件不同。');
     console.log('已生成签名发布候选包：' + artifact);
-  } else if (installer) {
-    console.log('安装包已通过校验：' + artifact);
+  } else if (installer || checkOnly) {
+    console.log('Windows 包已通过校验：' + artifact);
   } else {
     const launcher = path.join(root, 'ClaudeBrowser.exe');
     const backup = path.join(root, 'release', 'previous-launcher.exe');

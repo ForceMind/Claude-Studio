@@ -1,17 +1,19 @@
 export const starterAccounts = ['A', 'B'] as const;
 export type Account = string;
 export type Profile = { language: string; zone: string; mail: string; name?: string };
-export type SettingsPanelKind = 'settings' | 'add-account' | null;
+export type SettingsPanelKind = 'settings' | 'add-account' | 'mailboxes' | null;
+export type Mailbox = { name: string; address: string; url: string };
+export type ClaudeLinkChoice = { id: string; source: Account };
 
 export function profileName(id: Account, profile: Profile): string {
   return profile.name ?? '账户 ' + id;
 }
-export type Settings = { port: number | null; profiles: Record<Account, Profile> };
+export type Settings = { port: number | null; profiles: Record<Account, Profile>; mailboxes: Record<string, Mailbox> };
 export const home = 'https://claude.ai/';
 export const maxTabs = 48;
 export const environmentWidth = 320;
 export type Destination = 'claude' | 'mail';
-export type Tab = { id: string; url: string; pinned: boolean; destination?: Destination };
+export type Tab = { id: string; url: string; pinned: boolean; destination?: Destination; mailboxId?: string };
 export type Workspace = { tabs: Tab[]; active: string; closed: Tab[] };
 export type Bounds = { x?: number; y?: number; width: number; height: number; maximized: boolean };
 export type Saved = { version: 1; workspaces: Record<Account, Workspace>; bounds: Bounds };
@@ -24,12 +26,14 @@ export type ExitState =
   | { state: 'checked'; address: string; checkedAt: number };
 export type AccountEnvironment = PageEnvironment & {
   source: 'page' | 'settings';
+  status: ShellState['status'];
   exit: ExitState;
 };
 export type ShellState = {
   account: Account; tabs: (Tab & Page)[]; active: string; canRestore: boolean; settings: Settings;
   status: 'unset' | 'connecting' | 'offline' | 'online';
-  panel: SettingsPanelKind; fullscreen: boolean; notice?: string; environment?: AccountEnvironment;
+  panel: SettingsPanelKind; mailPicker: boolean; claudeLink?: ClaudeLinkChoice;
+  fullscreen: boolean; notice?: string; environment?: AccountEnvironment;
 };
 
 export type Command =
@@ -42,6 +46,10 @@ export type Command =
   | { type: 'check-exit'; id: Account }
   | { type: 'save'; id: Account; port: number; profile: Profile }
   | { type: 'open'; destination: Destination }
+  | { type: 'mail-picker' | 'mailboxes'; open: boolean }
+  | { type: 'mailbox-add'; owner: Account; mailbox: Mailbox }
+  | { type: 'mailbox-open'; owner: Account; id: string }
+  | { type: 'claude-link'; id: string; target?: Account }
   | { type: 'new' | 'restore' | 'back' | 'forward' | 'reload' | 'force-reload' | 'stop' | 'fullscreen' | 'retry' }
   | { type: 'select' | 'close' | 'pin' | 'tab-menu'; id: string }
   | { type: 'move'; id: string; target: string }

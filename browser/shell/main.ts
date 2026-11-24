@@ -1,15 +1,17 @@
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, Menu, powerMonitor, screen, session, WebContentsView } from 'electron';
 import type { IpcMainInvokeEvent, MenuItemConstructorOptions, WebContents } from 'electron';
-import { addProfile, checkPort, checkProfile, loadSettings, moveProfile, removeProfile, saveSettings } from '../settings.mjs';
+import { addMailbox, addProfile, checkPort, checkProfile, loadSettings, moveProfile, removeProfile, saveSettings } from '../settings.mjs';
 import { effectiveMailbox } from '../preferences.mjs';
 import { detectWindowsProxyPort } from './proxy-detection';
 import { AccountNetwork, securePreferences } from './network';
 import { address, environmentWidth, home, linkedTabMode, maxTabs, profileName, restorableURL, webURL } from './model';
 import { configuredPageEnvironment, decodePageEnvironment } from './environment';
-import type { Account, Command, Destination, Page, PageEnvironment, Profile, Saved, Settings, SettingsPanelKind, ShellState, Tab } from './model';
+import { isClaudeSite, mailboxSpaceKey, restorableHandoffURL, transferableClaudeURL } from './mailbox-route';
+import type { Account, Command, Destination, Mailbox, Page, PageEnvironment, Profile, Saved, Settings, SettingsPanelKind, ShellState, Tab } from './model';
 import { initialWorkspace, insertLinkedTab, loadState, makeTab, saveState } from './state';
 import { cacheablePageURL, ClosedPages } from './closed-pages';
 import { createProductionUpdates } from './production-updates';
@@ -44,6 +46,8 @@ app.enableSandbox();
 type Space = Awaited<ReturnType<AccountNetwork['connect']>>;
 type LiveTab = {
   account: Account;
+  mailboxId?: string;
+  handoff?: boolean;
   space: Space;
   view: WebContentsView;
   cachedMute?: boolean;
@@ -61,6 +65,8 @@ let saved: Saved;
 let account: Account = 'A';
 let resettingAccount: Account | undefined;
 let panel: SettingsPanelKind = null;
+let mailPicker = false;
+let claudeLink: { id: string; source: Account; tabId: string; mailboxId: string; url: string } | undefined;
 let environmentOpen = false;
 let notice: string | undefined;
 let closing = false;
@@ -71,7 +77,8 @@ const live = new Map<string, LiveTab>();
 const closedPages = new ClosedPages(closeView);
 const pending = new Map<string, Promise<LiveTab | undefined>>();
 const failures = new Map<string, string>();
-const popups = new Map<BrowserWindow, { account: Account; sourceTabId: string; ready: boolean }>();
+const handoffTargets = new Map<string, string>();
+const popups = new Map<BrowserWindow, { account: Account; sourceTabId: string; mailboxId?: string; ready: boolean }>();
 
 const workspace = (id = account) => saved.workspaces[id];
 const accountLabel = (id = account) => profileName(id, settings.profiles[id]);
@@ -81,6 +88,9 @@ function knownAccount(id: unknown): Account {
   return id;
 }
 const selected = () => workspace().tabs.find(tab => tab.id === workspace().active)!;
+const pageSpace = (owner: Account, mailboxId?: string) => mailboxId ? mailboxSpaceKey(mailboxId) : owner;
+const pageOverlay = () => !!(panel || mailPicker || claudeLink);
+const displayTabURL = (entry: LiveTab, input: string) => entry.handoff ? restorableHandoffURL(input) ?? home : webURL(input)?.href;
 const tabById = (id: string) => {
   const tab = workspace().tabs.find(candidate => candidate.id === id);
   if (!tab) throw new Error('标签不属于当前账户。');
@@ -88,18 +98,19 @@ const tabById = (id: string) => {
 };
 
 function environmentVisible(): boolean {
-  return environmentOpen && !panel;
+  return environmentOpen && !pageOverlay();
 }
 
 function activeEnvironment(): ShellState['environment'] {
   if (!environmentVisible()) return;
   const entry = live.get(workspace().active);
-  const reading = entry && !entry.page.error ? entry.environment?.reading : undefined;
+  const reading = entry && !entry.mailboxId && !entry.page.error ? entry.environment?.reading : undefined;
   return {
     ...(reading ?? configuredPageEnvironment(
       settings.profiles[account], app.getPreferredSystemLanguages(), Intl.DateTimeFormat().resolvedOptions().timeZone
     )),
     source: reading ? 'page' : 'settings',
+    status: network.status(account, settings.port),
     exit: network.exits.read(account)
   };
 }
@@ -111,7 +122,8 @@ function snapshot(): ShellState {
     tabs: space.tabs.map(tab => ({
       ...tab, ...live.get(tab.id)?.page, url: live.get(tab.id)?.page.url ?? tab.url, error: failures.get(tab.id) ?? live.get(tab.id)?.page.error
     })),
-    settings, status: network.status(account, settings.port), panel, environment: activeEnvironment(),
+    settings, status: network.status(pageSpace(account, space.tabs.find(tab => tab.id === space.active)?.mailboxId), settings.port),
+    panel, mailPicker, claudeLink: claudeLink && { id: claudeLink.id, source: claudeLink.source }, environment: activeEnvironment(),
     fullscreen: win?.isFullScreen() ?? false, notice
   };
 }
@@ -121,10 +133,10 @@ function layout(): void {
   const [width, height] = win.getContentSize();
   for (const [id, entry] of live) {
     if (closedPages.has(id)) {
-      if (!network.canReuse(entry.account, entry.space)) closedPages.discard(id);
+      if (!network.canReuse(pageSpace(entry.account, entry.mailboxId), entry.space)) closedPages.discard(id);
       continue;
     }
-    entry.view.setVisible(!panel && id === workspace().active && !!entry.requested &&
+    entry.view.setVisible(!pageOverlay() && id === workspace().active && !!entry.requested &&
       !entry.startingNativeNavigation && !entry.page.error && !failures.has(id));
     if (id === workspace().active) {
       const pageWidth = width - (environmentVisible() ? environmentWidth : 0);
@@ -133,8 +145,8 @@ function layout(): void {
   }
   for (const [popup, info] of popups) {
     if (popup.isDestroyed()) continue;
-    if (info.account !== account && popup.isVisible()) popup.hide();
-    if (info.account === account && info.ready && !popup.isVisible()) popup.showInactive();
+    if ((info.account !== account || pageOverlay()) && popup.isVisible()) popup.hide();
+    if (info.account === account && info.ready && !pageOverlay() && !popup.isVisible()) popup.showInactive();
   }
 }
 
@@ -142,7 +154,7 @@ function readActivePageEnvironment(): void {
   if (!environmentVisible()) return;
   const tabId = workspace().active;
   const entry = live.get(tabId);
-  if (!entry?.requested || entry.startingNativeNavigation || entry.environment || entry.page.loading || entry.page.error) return;
+  if (!entry?.requested || entry.mailboxId || entry.startingNativeNavigation || entry.environment || entry.page.loading || entry.page.error) return;
   const contents = entry.view.webContents;
   if (contents.isDestroyed() || contents.isLoadingMainFrame() || !webURL(contents.getURL())) return;
 
@@ -202,7 +214,18 @@ function navControls(contents: WebContents): MenuItemConstructorOptions[] {
   ];
 }
 
-function configureRemote(contents: WebContents, owner: Account, space: Space, sourceTabId: string): void {
+function offerClaudeLink(owner: Account, sourceTabId: string, mailboxId: string, url: string): void {
+  void serialize(() => {
+    if (closing || owner !== account || resettingAccount === owner || selected().id !== sourceTabId ||
+        selected().mailboxId !== mailboxId || panel || mailPicker || claudeLink || !Object.hasOwn(settings.mailboxes, mailboxId)) return;
+    claudeLink = { id: randomUUID(), source: owner, tabId: sourceTabId, mailboxId, url };
+    publish();
+    win?.webContents.focus();
+  }).catch(() => {});
+}
+
+function configureRemote(contents: WebContents, owner: Account, space: Space, sourceTabId: string, mailboxId?: string): void {
+  const requestLink = mailboxId ? (url: string) => offerClaudeLink(owner, sourceTabId, mailboxId, url) : undefined;
   contents.on('will-navigate', (event) => {
     if (closedPages.has(sourceTabId) || resettingAccount === owner) {
       event.preventDefault();
@@ -232,7 +255,12 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
     const items: MenuItemConstructorOptions[] = [];
     const target = webURL(params.linkURL);
     if (target) {
-      items.push({ label: '在新标签打开链接', click: () => addFromPage(owner, target.href) });
+      items.push({ label: '在新标签打开链接', click: () => {
+        if (mailboxId && isClaudeSite(target.href)) {
+          const url = transferableClaudeURL(target.href);
+          if (url) requestLink!(url);
+        } else addFromPage(owner, target.href, mailboxId);
+      } });
       items.push({ type: 'separator' });
     }
     if (params.isEditable) items.push({ role: 'cut' }, { role: 'copy' }, { role: 'paste' });
@@ -248,6 +276,11 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
         contents.session !== space.session || (!target && details.url !== 'about:blank')) {
       return { action: 'deny' };
     }
+    if (mailboxId && isClaudeSite(details.url)) {
+      const url = transferableClaudeURL(details.url);
+      if (url && !details.postBody) requestLink!(url);
+      return { action: 'deny' };
+    }
     const mode = linkedTabMode(details.disposition);
     if (mode) {
       if (workspace(owner).tabs.length >= maxTabs) {
@@ -261,7 +294,7 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
         createWindow(options) {
           // Electron also supplies webContents at runtime for this callback.
           const { webContents: guest } = options as typeof options & { webContents: WebContents };
-          return adoptLinkedTab(owner, sourceTabId, guest, space, details.url, mode === 'foreground');
+          return adoptLinkedTab(owner, sourceTabId, guest, space, details.url, mode === 'foreground', mailboxId);
         }
       };
     }
@@ -280,10 +313,10 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
         // options.webContents carries Chromium's original guest and its opener.
         const popup = new BrowserWindow(options);
         const guest = popup.webContents;
-        const info = { account: owner, sourceTabId, ready: false };
+        const info = { account: owner, sourceTabId, mailboxId, ready: false };
         popups.set(popup, info);
         popup.setMenu(null);
-        configureRemote(guest, owner, space, sourceTabId);
+        configureRemote(guest, owner, space, sourceTabId, mailboxId);
         guest.on('before-input-event', (event, input) => {
           if (input.type === 'keyDown' && input.control && input.key.toLowerCase() === 'w') {
             event.preventDefault();
@@ -294,11 +327,14 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
           event.preventDefault();
           popup.setTitle(accountLabel(owner) + ' · ' + (webURL(guest.getURL())?.host || '网页窗口'));
         });
-        guest.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
-          if (mainFrame && code !== -3 && account === owner) notify('弹窗加载失败（' + description + '）。');
+        guest.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+          if (mainFrame && code !== -3 && account === owner && !(mailboxId && isClaudeSite(url))) notify('弹窗加载失败（' + description + '）。');
         });
         popup.once('closed', () => popups.delete(popup));
-        void network.preparePopup(guest, space).then(failure => {
+        void network.preparePopup(guest, space, requestLink && (link => {
+          if (!popup.isDestroyed() && !webURL(guest.getURL())) popup.destroy();
+          requestLink(link);
+        })).then(failure => {
           if (popup.isDestroyed()) return;
           if (failure) {
             popup.destroy();
@@ -306,7 +342,7 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
             return;
           }
           info.ready = true;
-          if (owner === account) popup.show();
+          if (owner === account && !pageOverlay()) popup.show();
         });
         return guest;
       }
@@ -314,10 +350,10 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
   });
 }
 
-function addFromPage(owner: Account, url: string): void {
+function addFromPage(owner: Account, url: string, mailboxId?: string): void {
   void serialize(() => {
     if (!closing && resettingAccount !== owner && Object.hasOwn(settings.profiles, owner)) {
-      addTab(owner, url, undefined, account === owner);
+      addTab(owner, url, { destination: mailboxId ? 'mail' : undefined, activate: account === owner, mailboxId });
     }
   }).catch(error => {
     if (account === owner) notify(error.message);
@@ -330,12 +366,12 @@ function constructTab(owner: Account, tab: Tab, space: Space, guest?: WebContent
   view.setVisible(false);
   view.setBackgroundColor('#ffffff');
   win!.contentView.addChildView(view);
-  const entry: LiveTab = { account: owner, space, view, page: {} };
+  const entry: LiveTab = { account: owner, mailboxId: tab.mailboxId, handoff: handoffTargets.has(tab.id), space, view, page: {} };
   live.set(tab.id, entry);
-  configureRemote(contents, owner, space, tab.id);
+  configureRemote(contents, owner, space, tab.id, tab.mailboxId);
   function update(patch: Page = {}): void {
     if (live.get(tab.id) !== entry || contents.isDestroyed()) return;
-    const url = webURL(contents.getURL())?.href;
+    const url = displayTabURL(entry, contents.getURL());
     Object.assign(entry.page, patch, {
       url, back: contents.navigationHistory.canGoBack(), forward: contents.navigationHistory.canGoForward()
     });
@@ -343,7 +379,7 @@ function constructTab(owner: Account, tab: Tab, space: Space, guest?: WebContent
   }
   function navigated(url: string): void {
     if (live.get(tab.id) !== entry || contents.isDestroyed()) return;
-    const clean = restorableURL(url);
+    const clean = entry.handoff ? restorableHandoffURL(url) : restorableURL(url);
     if (clean && clean !== tab.url) {
       tab.url = clean;
       persist();
@@ -360,12 +396,12 @@ function constructTab(owner: Account, tab: Tab, space: Space, guest?: WebContent
   contents.on('did-start-loading', () => update({ loading: true, error: undefined }));
   contents.on('did-stop-loading', () => update({ loading: false }));
   contents.on('page-title-updated', (_event, title) => update({
-    title: title.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 180)
+    title: entry.handoff ? 'Claude' : title.replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, 180)
   }));
   contents.on('did-navigate', (_event, url) => navigated(url));
   contents.on('did-navigate-in-page', (_event, url, mainFrame) => { if (mainFrame) navigated(url); });
-  contents.on('did-fail-load', (_event, code, description, _url, mainFrame) => {
-    if (mainFrame && code !== -3) update({ loading: false, error: '网页加载失败（' + description + '）。' });
+  contents.on('did-fail-load', (_event, code, description, url, mainFrame) => {
+    if (mainFrame && code !== -3 && !(tab.mailboxId && isClaudeSite(url))) update({ loading: false, error: '网页加载失败（' + description + '）。' });
   });
   contents.on('render-process-gone', () => {
     if (closedPages.has(tab.id)) closedPages.discard(tab.id);
@@ -376,9 +412,10 @@ function constructTab(owner: Account, tab: Tab, space: Space, guest?: WebContent
 }
 
 function adoptLinkedTab(owner: Account, sourceTabId: string, guest: WebContents, space: Space,
-  url: string, foreground: boolean): WebContents {
+  url: string, foreground: boolean, mailboxId?: string): WebContents {
   const work = workspace(owner);
-  const tab = makeTab(restorableURL(url) ?? home);
+  const tab = makeTab(restorableURL(url) ?? (mailboxId ? settings.mailboxes[mailboxId].url : home), mailboxId ? 'mail' : undefined);
+  tab.mailboxId = mailboxId;
   const entry = constructTab(owner, tab, space, guest);
   // Chromium owns the first navigation, including its initiator and any POST body.
   entry.requested = url;
@@ -389,6 +426,8 @@ function adoptLinkedTab(owner: Account, sourceTabId: string, guest: WebContents,
   if (foreground && owner === account) {
     work.active = tab.id;
     panel = null;
+    mailPicker = false;
+    claudeLink = undefined;
   }
   guest.once('destroyed', () => {
     void serialize(() => {
@@ -397,7 +436,17 @@ function adoptLinkedTab(owner: Account, sourceTabId: string, guest: WebContents,
       if (owner === account) notify(error.message);
     });
   });
-  void network.preparePopup(guest, space).then(failure => {
+  void network.preparePopup(guest, space, mailboxId ? link => {
+    void serialize(() => {
+      if (closing || owner !== account || work.active !== tab.id || live.get(tab.id) !== entry) return;
+      const opener = work.tabs.find(item => item.id === sourceTabId && item.mailboxId === mailboxId);
+      if (opener && !webURL(guest.getURL())) {
+        work.active = opener.id;
+        closeTab(tab.id, owner, false);
+        offerClaudeLink(owner, opener.id, mailboxId, link);
+      } else offerClaudeLink(owner, tab.id, mailboxId, link);
+    }).catch(() => {});
+  } : undefined).then(failure => {
     if (live.get(tab.id) !== entry || guest.isDestroyed() || closing) return;
     if (failure) {
       closeView(tab.id);
@@ -408,7 +457,7 @@ function adoptLinkedTab(owner: Account, sourceTabId: string, guest: WebContents,
     entry.startingNativeNavigation = false;
     entry.page.loading = guest.isLoadingMainFrame();
     publish();
-    if (owner === account && work.active === tab.id && !panel && !entry.page.error) guest.focus();
+    if (owner === account && work.active === tab.id && !pageOverlay() && !entry.page.error) guest.focus();
   });
   persist();
   publish();
@@ -423,10 +472,14 @@ function mount(owner: Account, tab: Tab): Promise<LiveTab | undefined> {
   if (!settings.port || closing || resettingAccount === owner) return Promise.resolve(undefined);
   failures.delete(tab.id);
 
-  const task = network.connect(owner, settings.port, settings.profiles[owner]).then(async space => {
+  const mailboxId = tab.mailboxId;
+  if (mailboxId && !Object.hasOwn(settings.mailboxes, mailboxId)) return Promise.resolve(undefined);
+  const profile = mailboxId ? { language: 'system', zone: 'system', mail: '' } : settings.profiles[owner];
+  const task = network.connect(pageSpace(owner, mailboxId), settings.port, profile).then(async space => {
     if (pending.get(tab.id) !== task || closing) return;
     const entry = constructTab(owner, tab, space);
-    const ok = await network.prepare(entry.view.webContents, space, emptyPage);
+    const ok = await network.prepare(entry.view.webContents, space, emptyPage,
+      mailboxId ? link => offerClaudeLink(owner, tab.id, mailboxId, link) : undefined);
     if (pending.get(tab.id) !== task || closing) return;
     if (!ok) {
       closeView(tab.id);
@@ -453,10 +506,11 @@ function load(entry: LiveTab, url: string): void {
   entry.environment = undefined;
   entry.page.error = undefined;
   entry.page.loading = true;
-  entry.page.url = url;
+  entry.page.url = displayTabURL(entry, url);
   publish();
   void contents.loadURL(url).catch(error => {
-    if (!contents.isDestroyed() && entry.requested === url && error.code !== 'ERR_ABORTED') {
+    if (!contents.isDestroyed() && entry.requested === url && error.code !== 'ERR_ABORTED' &&
+        !(entry.mailboxId && isClaudeSite(url))) {
       entry.page.loading = false;
       entry.page.error ||= '网页未能打开。请检查代理和网页地址后重试。';
       publish();
@@ -468,8 +522,10 @@ function showTab(owner = account, tab = selected(), target?: string, focus = tru
   publish();
   void mount(owner, tab).then(entry => {
     if (!entry || closing || (owner !== account || tab.id !== workspace().active)) return;
-    if (target || !entry.requested) load(entry, target ?? tab.url);
-    if (focus && !panel && !entry.startingNativeNavigation && !entry.page.error && !entry.view.webContents.isDestroyed()) {
+    const handoff = handoffTargets.get(tab.id);
+    if (handoff) handoffTargets.delete(tab.id);
+    if (target || !entry.requested) load(entry, handoff ?? target ?? tab.url);
+    if (focus && !pageOverlay() && !entry.startingNativeNavigation && !entry.page.error && !entry.view.webContents.isDestroyed()) {
       entry.view.webContents.focus();
     }
   });
@@ -486,26 +542,33 @@ function closeView(id: string): void {
   if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close({ waitForBeforeUnload: false });
 }
 
-function addTab(owner: Account, url = home, destination?: Destination, activate = true): void {
+function addTab(owner: Account, url = home, { destination, activate = true, mailboxId, handoff }: {
+  destination?: Destination; activate?: boolean; mailboxId?: string; handoff?: string;
+} = {}): Tab {
   const space = workspace(owner);
   if (space.tabs.length >= maxTabs) throw new Error('标签页已达上限，请先关闭不需要的标签。');
   const tab = makeTab(url, destination);
+  if (mailboxId) tab.mailboxId = mailboxId;
+  if (handoff) handoffTargets.set(tab.id, handoff);
   space.tabs.push(tab);
   if (activate) {
     space.active = tab.id;
     panel = null;
+    mailPicker = false;
+    claudeLink = undefined;
   }
   persist();
   if (activate) showTab(owner, tab);
   else publish();
+  return tab;
 }
 
 function openDestination(destination: Destination): void {
   if (destination !== 'claude' && destination !== 'mail') throw new Error('无效的网页入口。');
   const target = destination === 'claude' ? home : effectiveMailbox(settings.profiles[account].mail);
-  const tab = workspace().tabs.find(item => item.destination === destination);
+  const tab = workspace().tabs.find(item => item.destination === destination && !item.mailboxId);
   if (!tab) {
-    addTab(account, target, destination);
+    addTab(account, target, { destination });
     return;
   }
   const current = live.get(tab.id)?.page.url ?? tab.url;
@@ -518,19 +581,56 @@ function openDestination(destination: Destination): void {
   showTab(account, tab, useTarget ? target : undefined);
 }
 
-function closeTab(id: string, owner = account): void {
+function openMailbox(owner: Account, id: string): void {
+  if (owner !== account || !Object.hasOwn(settings.mailboxes, id)) throw new Error('邮箱选择已失效，请重新选择。');
+  mailPicker = false;
+  panel = null;
+  const work = workspace(owner);
+  const tab = work.tabs.find(item => item.mailboxId === id);
+  if (!tab) {
+    addTab(owner, settings.mailboxes[id].url, { destination: 'mail', mailboxId: id });
+    return;
+  }
+  work.active = tab.id;
+  persist();
+  showTab(owner, tab);
+}
+
+function chooseClaudeLink(id: string, target: unknown): void {
+  const request = claudeLink;
+  if (!request || request.id !== id) return;
+  if (target === undefined || account !== request.source || selected().id !== request.tabId ||
+      selected().mailboxId !== request.mailboxId || !Object.hasOwn(settings.mailboxes, request.mailboxId)) {
+    claudeLink = undefined;
+    publish();
+    return;
+  }
+  const owner = knownAccount(target);
+  if (workspace(owner).tabs.length >= maxTabs) throw new Error('目标账号的标签已达上限。请改选账号，或取消后关闭标签再试。');
+  claudeLink = undefined;
+  const tab = addTab(owner, home, { activate: owner === account, handoff: request.url });
+  if (owner !== account) {
+    workspace(owner).active = tab.id;
+    persist();
+    switchAccount(owner);
+  }
+}
+
+function closeTab(id: string, owner = account, remember = true): void {
   const space = workspace(owner);
   const index = space.tabs.findIndex(tab => tab.id === id);
   if (index < 0) throw new Error('标签不属于当前账户。');
   const tab = space.tabs[index];
+  handoffTargets.delete(id);
+  if (claudeLink?.tabId === id) claudeLink = undefined;
   const entry = live.get(id);
   const contents = entry?.view.webContents;
-  const retain = win && !win.isDestroyed() && entry?.requested && !pending.has(id) &&
-    !entry.startingNativeNavigation && !entry.page.error && !failures.has(id) && contents &&
+  const retain = remember && win && !win.isDestroyed() && entry?.requested && !pending.has(id) &&
+    !entry.handoff && !entry.startingNativeNavigation && !entry.page.error && !failures.has(id) && contents &&
     !contents.isDestroyed() && !contents.isLoadingMainFrame() && cacheablePageURL(contents.getURL()) &&
-    network.canReuse(owner, entry.space) && ![...popups.values()].some(info => info.sourceTabId === id);
+    network.canReuse(pageSpace(owner, tab.mailboxId), entry.space) && ![...popups.values()].some(info => info.sourceTabId === id);
   space.tabs.splice(index, 1);
-  space.closed = [tab, ...space.closed].slice(0, 12);
+  if (remember) space.closed = [tab, ...space.closed].slice(0, 12);
   if (retain && entry && contents && win) {
     entry.view.setVisible(false);
     entry.cachedMute = contents.isAudioMuted();
@@ -554,7 +654,7 @@ function restoreTab(): void {
     const entry = live.get(tab.id);
     const contents = entry?.view.webContents;
     if (win && entry?.cachedMute !== undefined && contents && !contents.isDestroyed() &&
-        !contents.isLoadingMainFrame() && cacheablePageURL(contents.getURL()) && network.canReuse(account, entry.space)) {
+        !contents.isLoadingMainFrame() && cacheablePageURL(contents.getURL()) && network.canReuse(pageSpace(account, tab.mailboxId), entry.space)) {
       win.contentView.addChildView(entry.view);
       contents.setAudioMuted(entry.cachedMute);
       entry.cachedMute = undefined;
@@ -605,7 +705,10 @@ async function closeAccountContents(id: Account): Promise<void> {
       item.once('destroyed', closed);
     }
   }
-  for (const tab of workspace(id).tabs) pending.delete(tab.id);
+  for (const tab of workspace(id).tabs) {
+    pending.delete(tab.id);
+    handoffTargets.delete(tab.id);
+  }
   try {
     for (const [tabId] of entries) closeView(tabId);
     for (const popup of windows) popup.destroy();
@@ -625,7 +728,7 @@ async function resetAccount(id: Account, remove: boolean): Promise<void> {
   const action = remove ? '移除账号' : '清除本机登录';
   const { response } = await dialog.showMessageBox(win!, {
     type: 'warning', message: action + '「' + label + '」？',
-    detail: '将关闭该账号的标签和弹窗，清除 Cookie、网站存储和缓存，网站本地草稿也可能丢失。' +
+    detail: '将关闭该账号的网页，清除其 Cookie、网站存储和缓存，网站本地草稿也可能丢失。邮箱空间的登录由邮箱空间保存。' +
       (remove ? '该账号的设置和本机标签记录也会删除。' : '该账号的设置和已保存的标签地址会保留。'),
     buttons: ['取消', action], defaultId: 0, cancelId: 0, noLink: true
   });
@@ -662,24 +765,25 @@ async function updateSettings(id: Account, port: number, draft: Profile): Promis
   const portChanged = settings.port !== port;
   const previous = settings.profiles[id];
   const preferencesChanged = previous.language !== profile.language || previous.zone !== profile.zone;
-  const affected = portChanged ? Object.keys(settings.profiles) : preferencesChanged ? [id] : [];
-  const next = { port, profiles: { ...settings.profiles, [id]: profile } };
+  const affected = new Set(portChanged ? [...Object.keys(settings.profiles), ...Object.keys(settings.mailboxes).map(mailboxSpaceKey)] :
+    preferencesChanged ? [id] : []);
+  const next = { ...settings, port, profiles: { ...settings.profiles, [id]: profile } };
   await saveSettings(root, next);
   settings = next;
   if (portChanged) productionUpdates?.proxyChanged();
   if (previous.mail !== profile.mail && profile.mail) {
-    for (const tab of [...workspace(id).tabs, ...workspace(id).closed].filter(tab => tab.destination === 'mail')) {
+    for (const tab of [...workspace(id).tabs, ...workspace(id).closed].filter(tab => tab.destination === 'mail' && !tab.mailboxId)) {
       tab.url = profile.mail;
       closeView(tab.id);
     }
     persist();
   }
-  for (const owner of affected) {
-    for (const [tabId, entry] of live) if (entry.account === owner) closeView(tabId);
-    for (const tab of workspace(owner).tabs) pending.delete(tab.id);
-    for (const [popup, data] of popups) if (data.account === owner) popup.destroy();
+  for (const [tabId, entry] of live) if (affected.has(pageSpace(entry.account, entry.mailboxId))) closeView(tabId);
+  for (const [owner, work] of Object.entries(saved.workspaces)) {
+    for (const tab of work.tabs) if (affected.has(pageSpace(owner, tab.mailboxId))) pending.delete(tab.id);
   }
-  await Promise.all(affected.map(owner => network.disconnect(owner)));
+  for (const [popup, data] of popups) if (affected.has(pageSpace(data.account, data.mailboxId))) popup.destroy();
+  await Promise.all([...affected].map(key => network.disconnect(key)));
   if (closing) return;
   panel = null;
   win?.setTitle(accountLabel() + ' · Claude Browser');
@@ -718,7 +822,8 @@ function appMenu(): MenuItemConstructorOptions[] {
     ] },
     { label: '浏览', submenu: [
       { label: '打开 Claude', click: menuAction({ type: 'open', destination: 'claude' }) },
-      { label: '打开邮箱', click: menuAction({ type: 'open', destination: 'mail' }) },
+      { label: '打开邮箱', click: menuAction({ type: 'mail-picker', open: true }) },
+      { label: '邮箱空间', click: menuAction({ type: 'mailboxes', open: true }) },
       { label: '转到地址栏', accelerator: 'Ctrl+L', click: focusAddress },
       { label: '后退', accelerator: 'Alt+Left', click: menuAction({ type: 'back' }) },
       { label: '前进', accelerator: 'Alt+Right', click: menuAction({ type: 'forward' }) },
@@ -761,6 +866,8 @@ function refreshMenu(): void {
 function switchAccount(id: Account): void {
   if (!win || win.isDestroyed() || closing) return;
   account = id;
+  mailPicker = false;
+  claudeLink = undefined;
   win.setTitle(accountLabel() + ' · Claude Browser');
   panel = null;
   refreshMenu();
@@ -786,6 +893,8 @@ async function dispatch(command: Command): Promise<void> {
   const page = live.get(tab.id)?.view.webContents;
   const history = page && !page.isDestroyed() ? page.navigationHistory : undefined;
   notice = undefined;
+  if (command.type !== 'claude-link') claudeLink = undefined;
+  if (command.type !== 'mail-picker') mailPicker = false;
   switch (command.type) {
     case 'account':
       switchAccount(knownAccount(command.id));
@@ -829,6 +938,32 @@ async function dispatch(command: Command): Promise<void> {
       await updateSettings(command.id, command.port, command.profile);
       break;
     case 'open': openDestination(command.destination); break;
+    case 'mail-picker':
+      mailPicker = command.open === true;
+      publish();
+      if (!mailPicker && !panel) showTab(account, tab, undefined, false);
+      break;
+    case 'mailboxes':
+      panel = command.open === true ? 'mailboxes' : null;
+      publish();
+      if (!panel) showTab();
+      break;
+    case 'mailbox-add': {
+      if (panel !== 'mailboxes' || command.owner !== account) throw new Error('请在当前账号打开邮箱空间。');
+      if (workspace().tabs.length >= maxTabs) throw new Error('请先关闭不用的标签，再添加邮箱。');
+      const next = addMailbox(settings, command.mailbox as Mailbox);
+      await saveSettings(root, next.settings);
+      if (closing) break;
+      settings = next.settings;
+      openMailbox(command.owner, next.id);
+      break;
+    }
+    case 'mailbox-open':
+      openMailbox(command.owner, command.id);
+      break;
+    case 'claude-link':
+      chooseClaudeLink(command.id, command.target);
+      break;
     case 'new': addTab(account); break;
     case 'select':
       workspace().active = tabById(command.id).id;
@@ -861,6 +996,14 @@ async function dispatch(command: Command): Promise<void> {
     case 'navigate': {
       const target = typeof command.url === 'string' ? address(command.url) : undefined;
       if (!target) throw new Error('请输入有效的 HTTP 或 HTTPS 地址。');
+      if (tab.mailboxId && isClaudeSite(target)) {
+        const url = transferableClaudeURL(target);
+        if (!url) throw new Error('请在 Claude 账号中打开这个地址。');
+        offerClaudeLink(account, tab.id, tab.mailboxId, url);
+        break;
+      }
+      const liveEntry = live.get(tab.id);
+      if (liveEntry) liveEntry.handoff = false;
       tab.url = restorableURL(target) || tab.url;
       panel = null;
       persist();
@@ -874,14 +1017,14 @@ async function dispatch(command: Command): Promise<void> {
     case 'reload': {
       const entry = live.get(tab.id);
       if (!history || !entry?.requested || entry.page.error) {
-        showTab(account, tab, entry?.page.url || entry?.requested || tab.url);
+        showTab(account, tab, entry?.handoff ? tab.url : entry?.page.url || entry?.requested || tab.url);
       } else if (command.type === 'force-reload') page!.reloadIgnoringCache();
       else page!.reload();
       break;
     }
     case 'retry': {
       const entry = live.get(tab.id);
-      const target = entry?.page.url || entry?.requested || tab.url;
+      const target = entry?.handoff ? tab.url : entry?.page.url || entry?.requested || tab.url;
       closeView(tab.id);
       showTab(account, tab, target);
       break;
@@ -911,7 +1054,7 @@ async function dispatch(command: Command): Promise<void> {
 }
 
 function pageTitle(tab: Tab): string {
-  return live.get(tab.id)?.page.title || (tab.destination === 'claude' ? 'Claude' :
+  return (tab.mailboxId && settings.mailboxes[tab.mailboxId]?.name) || live.get(tab.id)?.page.title || (tab.destination === 'claude' ? 'Claude' :
     tab.destination === 'mail' ? '邮箱' : webURL(tab.url)?.host || '新标签页');
 }
 
@@ -950,6 +1093,8 @@ function createWindow(): void {
   win.on('leave-full-screen', publish);
   win.once('close', () => {
     closing = true;
+    claudeLink = undefined;
+    handoffTargets.clear();
     if (win) {
       saved.bounds = { ...win.getNormalBounds(), maximized: win.isMaximized() };
       persist();
@@ -1024,7 +1169,7 @@ async function start(): Promise<void> {
     (_details, callback) => callback({ cancel: true }));
   settings = await loadSettings(root);
   if (!Object.hasOwn(settings.profiles, account)) account = Object.keys(settings.profiles)[0];
-  saved = loadState(root, Object.keys(settings.profiles));
+  saved = loadState(root, Object.keys(settings.profiles), settings.mailboxes);
   try {
     productionUpdates = createProductionUpdates(root, () => settings.port, () => win, refreshMenu, prepareUpdateExit, installedRoot);
   } catch {
@@ -1051,8 +1196,10 @@ async function start(): Promise<void> {
   ipcMain.handle('shell:command', (event, input: Command) => {
     if (!trusted(event)) throw new Error('未知的应用界面。');
     if (!input || typeof input !== 'object') throw new Error('无效的浏览器操作。');
-    return serialize(() => dispatch(input)).then(() => undefined,
-      error => error instanceof Error ? error.message : '无法完成操作。');
+    return serialize(() => dispatch(input)).then(() => undefined, error => {
+      publish();
+      return error instanceof Error ? error.message : '无法完成操作。';
+    });
   });
   createWindow();
   productionUpdates?.open();

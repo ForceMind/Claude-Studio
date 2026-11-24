@@ -4,11 +4,13 @@ import type { Session, WebContents, WebPreferences } from 'electron';
 import { startRelay } from '../relay.mjs';
 import { acceptLanguage, languagesFor } from './model';
 import { ExitChecks, probeExit } from './environment';
+import { isClaudeSite, isMailboxSpace, partitionForSpace, transferableClaudeURL } from './mailbox-route';
 import type { Account, Profile, ShellState } from './model';
 
 type Relay = Awaited<ReturnType<typeof startRelay>>;
 type AgentMetadata = Record<string, unknown> & { uaFullVersion?: string };
 type Space = { session: Session; relay: Relay; profile: Profile; languages: string[]; agent?: AgentMetadata };
+type LinkRequest = (url: string) => void;
 type Connection = { status: ShellState['status']; pending: Promise<Space>; space?: Space };
 const webFilters = { urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] };
 
@@ -20,7 +22,7 @@ export const securePreferences: WebPreferences = {
 export class AccountNetwork {
   private entries = new Map<Account, Connection>();
   private sessions = new Map<Account, Session>();
-  private mainFrames = new Map<number, { space: Space; ready?: Promise<boolean> }>();
+  private mainFrames = new Map<number, { space: Space; ready?: Promise<boolean>; requestLink?: LinkRequest }>();
 
   readonly exits: ExitChecks;
 
@@ -64,7 +66,7 @@ export class AccountNetwork {
     });
     try {
       const configured = this.sessions.get(id);
-      const accountSession = configured ?? session.fromPartition('persist:account-' + id);
+      const accountSession = configured ?? session.fromPartition(partitionForSpace(id));
       const languages = languagesFor(profile.language, app.getPreferredSystemLanguages());
       const header = acceptLanguage(languages);
       accountSession.setUserAgent(accountSession.getUserAgent(), languages.join(','));
@@ -86,6 +88,15 @@ export class AccountNetwork {
         accountSession.on('will-download', event => event.preventDefault());
         accountSession.webRequest.onBeforeRequest(webFilters, (details, callback) => {
           const activeSpace = this.entries.get(id)?.space;
+          if (isMailboxSpace(id) && isClaudeSite(details.url)) {
+            callback({ cancel: true });
+            const target = details.resourceType === 'mainFrame' && details.method === 'GET' &&
+              !details.uploadData?.length && transferableClaudeURL(details.url);
+            const contentsId = details.webContentsId ?? details.webContents?.id;
+            const frame = contentsId === undefined ? undefined : this.mainFrames.get(contentsId);
+            if (target && activeSpace?.relay.online && frame?.space === activeSpace) frame?.requestLink?.(target);
+            return;
+          }
           if (!activeSpace?.relay.online) {
             callback({ cancel: true });
             return;
@@ -128,19 +139,19 @@ export class AccountNetwork {
     };
   }
 
-  private registerFrame(contents: WebContents, space: Space, ready?: Promise<boolean>): void {
+  private registerFrame(contents: WebContents, space: Space, ready?: Promise<boolean>, requestLink?: LinkRequest): void {
     const id = contents.id;
-    this.mainFrames.set(id, { space, ready });
+    this.mainFrames.set(id, { space, ready, requestLink });
     contents.once('destroyed', () => this.mainFrames.delete(id));
   }
 
-  prepare(contents: WebContents, space: Space, bootstrap: string): Promise<boolean> {
+  prepare(contents: WebContents, space: Space, bootstrap: string, requestLink?: LinkRequest): Promise<boolean> {
     const ready = this.applyEnvironment(contents, space, bootstrap).then(failure => !failure);
-    this.registerFrame(contents, space, ready);
+    this.registerFrame(contents, space, ready, requestLink);
     return ready;
   }
 
-  preparePopup(contents: WebContents, space: Space): Promise<string | undefined> {
+  preparePopup(contents: WebContents, space: Space, requestLink?: LinkRequest): Promise<string | undefined> {
     if (contents.session !== space.session) {
       contents.stop();
       return Promise.resolve('账号会话不匹配');
@@ -153,7 +164,7 @@ export class AccountNetwork {
     }
     // Native navigation can be required for the renderer to acknowledge CDP commands.
     // Register the account's proxy route synchronously, then start CDP after handing back the guest.
-    this.registerFrame(contents, space);
+    this.registerFrame(contents, space, undefined, requestLink);
     return nextTurn().then(() => this.applyEnvironment(contents, space));
   }
 
@@ -216,7 +227,7 @@ export class AccountNetwork {
 
   async clearAccountData(id: Account): Promise<void> {
     await this.disconnect(id);
-    const accountSession = this.sessions.get(id) ?? session.fromPartition('persist:account-' + id);
+    const accountSession = this.sessions.get(id) ?? session.fromPartition(partitionForSpace(id));
     await accountSession.closeAllConnections();
     await accountSession.clearData();
     await accountSession.clearAuthCache();

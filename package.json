@@ -1,7 +1,7 @@
 {
   "name": "claude-studio-browser",
   "productName": "Claude Browser",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Windows browser shell for Claude account spaces",
   "private": true,
   "type": "module",

@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { build } from 'esbuild';
 import { defaults, loadSettings } from '../settings.mjs';
+import { loadState } from '../shell/state.ts';
 import { installedMarker, readInstalledChoice, saveInstalledChoice, windowsAppId } from '../shell/windows-edition.ts';
 import { signReleaseManifest, sha256 } from '../update/release-manifest.mjs';
 
@@ -46,7 +47,7 @@ async function until(condition) {
   assert.fail('main process did not publish the expected state');
 }
 
-async function start(t, release, { port = 30202, decisions = [], failClear, fakePages = false, installed } = {}) {
+async function start(t, release, { port = 30202, decisions = [], failClear, fakePages = false, installed, savedSettings = defaults } = {}) {
   const parent = path.resolve(tmpdir());
   const root = await mkdtemp(path.join(parent, 'claude-production-shell-'));
   let dispose = async () => {};
@@ -58,7 +59,7 @@ async function start(t, release, { port = 30202, decisions = [], failClear, fake
   });
   const user = path.join(root, '.browser-local');
   await mkdir(path.join(user, 'electron'), { recursive: true });
-  await writeFile(path.join(user, 'settings.json'), JSON.stringify({ ...defaults, port }));
+  await writeFile(path.join(user, 'settings.json'), JSON.stringify({ ...savedSettings, port }));
   const resources = path.join(root, 'resources');
   const installedRoot = path.join(root, 'Claude Browser');
   if (installed) {
@@ -109,7 +110,7 @@ async function start(t, release, { port = 30202, decisions = [], failClear, fake
     constructor() {
       super();
       currentWindow = this;
-      this.webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler() {}, send() {} });
+      this.webContents = Object.assign(new EventEmitter(), { setWindowOpenHandler() {}, send() {}, focus() {} });
       this.contentView = { addChildView: view => attached.add(view), removeChildView: view => attached.delete(view) };
     }
     getContentSize() { return [900, 650]; }
@@ -177,7 +178,8 @@ async function start(t, release, { port = 30202, decisions = [], failClear, fake
           ' async connect(id){if (!this.spaces.has(id)) this.spaces.set(id, {session:{id}}); return this.spaces.get(id);}',
           ' canReuse(id,space){return this.spaces.get(id) === space;}',
           ' webPreferences(space){return {session:space.session};}',
-          ' async prepare(){return true;}',
+          ' async prepare(contents, _space, _bootstrap, requestLink){contents.requestLink = requestLink; return true;}',
+          ' async clearAccountData(id){this.spaces.delete(id);}',
           ' async disconnect(id){this.spaces.delete(id);}',
           ' close(){this.spaces.clear();}',
           '}'
@@ -354,4 +356,103 @@ test('安装版首次选择现有资料后保存位置并等待重启，不启�
   assert.equal(shell.app.relaunched, true);
   assert.equal(shell.window, undefined);
   assert.deepEqual(readInstalledChoice(shell.installedRoot), { kind: 'portable', root: shell.user });
+});
+
+test('A 和 B 分别打开共享邮箱标签，第二个邮箱拥有独立分区，旧邮箱继续用原分区', windows, async t => {
+  const shell = await start(t, null, { fakePages: true, decisions: [1] });
+  const first = { name: '工作邮箱', address: 'work@example.test', url: 'https://mail.example.test/' };
+  await shell.send({ type: 'open', destination: 'mail' });
+  const legacyTab = shell.state().active;
+  await until(() => shell.pages.some(view => view.webContents.session.id === 'A'));
+  await shell.send({ type: 'mailboxes', open: true });
+  assert.equal(await shell.send({ type: 'mailbox-add', owner: 'A', mailbox: first }), undefined);
+  const [firstId] = Object.keys(shell.state().settings.mailboxes);
+  const aTab = shell.state().active;
+  assert.notEqual(aTab, legacyTab);
+  await until(() => shell.pages.some(view => view.webContents.url === first.url));
+  const aView = shell.pages.find(view => view.webContents.url === first.url);
+  await shell.send({ type: 'navigate', url: 'https://mail.example.test/message-a' });
+  await until(() => aView.webContents.url.endsWith('/message-a'));
+  await shell.send({ type: 'account', id: 'B' });
+  assert.match(await shell.send({ type: 'mailbox-open', owner: 'A', id: firstId }), /失效/);
+  await shell.send({ type: 'mailbox-open', owner: 'B', id: firstId });
+  const bTab = shell.state().active;
+  await until(() => shell.pages.some(view => view !== aView && view.webContents.url === first.url));
+  const bView = shell.pages.find(view => view !== aView && view.webContents.url === first.url);
+  assert.notEqual(aTab, bTab);
+  assert.equal(aView.webContents.session, bView.webContents.session);
+  assert.equal(bView.webContents.session.id, 'mailbox:' + firstId);
+  assert.match(aView.webContents.url, /message-a$/);
+  await shell.send({ type: 'mailbox-open', owner: 'B', id: firstId });
+  assert.equal(shell.state().active, bTab);
+  assert.equal(shell.state().tabs.filter(tab => tab.mailboxId === firstId).length, 1);
+  await shell.send({ type: 'mailboxes', open: true });
+  const second = { name: '个人邮箱', address: 'personal@example.test', url: 'https://mail.example.test/' };
+  await shell.send({ type: 'mailbox-add', owner: 'B', mailbox: second });
+  const secondId = shell.state().tabs.find(tab => tab.id === shell.state().active).mailboxId;
+  await until(() => shell.pages.some(view => view.webContents.session.id === 'mailbox:' + secondId));
+  assert.notEqual(firstId, secondId);
+  assert.equal(await shell.send({ type: 'account-clear', id: 'A' }), undefined);
+  assert.equal(bView.webContents.destroyed, false);
+  await shell.send({ type: 'account', id: 'A' });
+  await shell.send({ type: 'close', id: aTab });
+  await shell.send({ type: 'restore' });
+  assert.equal(shell.state().active, aTab);
+  const restored = loadState(shell.user, ['A','B'], (await loadSettings(shell.user)).mailboxes);
+  assert.equal(restored.workspaces.A.tabs.find(tab => tab.id === legacyTab).mailboxId, undefined);
+  assert.equal(restored.workspaces.A.tabs.find(tab => tab.id === aTab).mailboxId, firstId);
+  assert.equal(restored.workspaces.B.tabs.find(tab => tab.id === bTab).mailboxId, firstId);
+  assert.notEqual(aView.webContents.session, shell.pages.find(view => view.webContents.session.id === 'A').webContents.session);
+});
+
+test('邮箱 Claude 链接只在明确确认的账号打开一次，取消和切号作废旧选择，地址不进入壳和恢复文件', windows, async t => {
+  const mailboxId = 'eeef9159-99f8-4fc5-aa8d-4562419419a1';
+  const mailbox = { name: '工作邮箱', address: 'example@example.test', url: 'https://mail.example.test/' };
+  const shell = await start(t, null, { fakePages: true, savedSettings: { ...defaults, mailboxes: { [mailboxId]: mailbox } } });
+  await shell.send({ type: 'mailbox-open', owner: 'A', id: mailboxId });
+  const aMail = shell.state().active;
+  await until(() => shell.pages[0]?.webContents.url === mailbox.url);
+  const mail = shell.pages[0].webContents;
+  const url = 'https://claude.ai/synthetic-private-path?token=synthetic-private-value#test';
+  const open = (link, options = {}) => mail.open({ url: link, disposition: 'foreground-tab', ...options });
+  assert.equal(open('https://accounts.google.com/signin', { disposition: 'new-window' }).overrideBrowserWindowOptions.webPreferences.session, mail.session);
+  assert.deepEqual(open(url, { postBody: { data: [] } }), { action: 'deny' });
+  assert.equal(shell.state().claudeLink, undefined);
+  assert.deepEqual(open(url), { action: 'deny' });
+  await until(() => shell.state().claudeLink);
+  const first = shell.state().claudeLink;
+  assert.deepEqual(Object.keys(first).sort(), ['id', 'source']);
+  assert.equal(first.source, 'A');
+  assert.equal(mail.url, mailbox.url);
+  await shell.send({ type: 'claude-link', id: first.id });
+  assert.equal(shell.state().claudeLink, undefined);
+  assert.equal(shell.state().active, aMail);
+  assert.equal(shell.pages.some(view => view.webContents.url === url), false);
+  mail.requestLink(url);
+  await until(() => shell.state().claudeLink);
+  const stale = shell.state().claudeLink.id;
+  await shell.send({ type: 'account', id: 'B' });
+  await shell.send({ type: 'claude-link', id: stale, target: 'B' });
+  assert.equal(shell.pages.some(view => view.webContents.url === url), false);
+  await shell.send({ type: 'account', id: 'A' });
+  mail.requestLink(url);
+  await until(() => shell.state().claudeLink);
+  const current = shell.state().claudeLink.id;
+  await shell.send({ type: 'claude-link', id: current, target: 'B' });
+  await shell.send({ type: 'claude-link', id: current, target: 'A' });
+  await until(() => shell.pages.some(view => view.webContents.url === url));
+  assert.equal(shell.state().account, 'B');
+  assert.deepEqual(shell.pages.filter(view => view.webContents.url === url).map(view => view.webContents.session.id), ['B']);
+  assert.doesNotMatch(JSON.stringify(shell.state()), /synthetic-private/);
+  const file = path.join(shell.user, 'window-state.json');
+  assert.doesNotMatch(await readFile(file, 'utf8'), /synthetic-private/);
+  await shell.send({ type: 'account', id: 'A' });
+  assert.equal(shell.state().active, aMail);
+  assert.equal(mail.url, mailbox.url);
+  mail.requestLink(url + '-a');
+  await until(() => shell.state().claudeLink);
+  await shell.send({ type: 'claude-link', id: shell.state().claudeLink.id, target: 'A' });
+  await until(() => shell.pages.some(view => view.webContents.url === url + '-a'));
+  assert.equal(shell.state().account, 'A');
+  assert.deepEqual(shell.pages.filter(view => view.webContents.url === url + '-a').map(view => view.webContents.session.id), ['A']);
 });

@@ -151,6 +151,11 @@ export async function verifyPackage(exe, { installer = false, verifierHash } = {
     const renderer = extractFile(asar, 'dist-app/renderer.js').toString('utf8');
     assert.match(renderer, /account-environment/);
     assert.match(renderer, /check-exit/);
+    assert.match(renderer, /mail-picker/);
+    assert.match(renderer, /claude-link-dialog/);
+    assert.match(main, /persist:mailbox-/);
+    assert.match(main, /transferableClaudeURL/);
+    assert.match(main, /chooseClaudeLink/);
     assert.match(main, /executeJavaScriptInIsolatedWorld/);
     assert.match(main, /api64\.ipify\.org/);
     assert.match(main, /shell:detect-proxy/);
@@ -162,7 +167,7 @@ export async function verifyPackage(exe, { installer = false, verifierHash } = {
     assert.match(renderer, /America\/Los_Angeles/);
     assert.match(extractFile(asar, 'dist-app/preload.cjs').toString('utf8'), /shell:detect-proxy/);
     for (const marker of ['WebContentsView', 'setWindowOpenHandler', 'createWindow(options)', 'persist:account-',
-      'loadFile(html)', 'preload.cjs', 'preparePopup(guest, space)', 'adoptLinkedTab', 'foreground-tab',
+      'loadFile(html)', 'preload.cjs', 'preparePopup(guest, space,', 'adoptLinkedTab', 'foreground-tab',
       'outlivesOpener: true', 'Emulation.setTimezoneOverride',
       'Emulation.setUserAgentOverride', 'proxyBypassRules', 'PORTABLE_EXECUTABLE_DIR']) {
       assert.ok(main.includes(marker), 'real app entry contains ' + marker);

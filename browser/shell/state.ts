@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { home, maxTabs, restorableURL, starterAccounts } from './model.ts';
-import type { Account, Bounds, Saved, Tab, Workspace } from './model.ts';
+import type { Account, Bounds, Mailbox, Saved, Tab, Workspace } from './model.ts';
+import { validMailboxId } from '../settings.mjs';
 
 type ObjectData = Record<string, unknown>;
 const object = (value: unknown): value is ObjectData =>
@@ -24,15 +25,19 @@ export function initialWorkspace(): Workspace {
   return { tabs: [tab], active: tab.id, closed: [] };
 }
 
-function decodeWorkspace(value: unknown, ids: Set<string>): Workspace {
+function decodeWorkspace(value: unknown, ids: Set<string>, mailboxes: Record<string, Mailbox>): Workspace {
   if (!object(value) || !Array.isArray(value.tabs) || !Array.isArray(value.closed)) return initialWorkspace();
   function decodeTab(raw: unknown): Tab[] {
     if (!object(raw) || typeof raw.id !== 'string' || !/^[\da-f-]{36}$/i.test(raw.id) || ids.has(raw.id)) return [];
     const destination = raw.destination === 'mail' || raw.destination === 'claude' ? raw.destination : undefined;
     const url = restorableURL(raw.url);
-    if (!url && destination === 'mail') return [];
+    const mailboxId = raw.mailboxId;
+    if (mailboxId !== undefined && (typeof mailboxId !== 'string' || !validMailboxId(mailboxId) ||
+        !Object.hasOwn(mailboxes, mailboxId) || destination !== 'mail')) return [];
+    if (!url && destination === 'mail' && !mailboxId) return [];
     ids.add(raw.id);
-    return [{ id: raw.id, url: url || home, pinned: raw.pinned === true, destination }];
+    return [{ id: raw.id, url: url || (mailboxId ? mailboxes[mailboxId].url : home), pinned: raw.pinned === true, destination,
+      ...(mailboxId ? { mailboxId } : {}) }];
   }
   const tabs = value.tabs.slice(0, maxTabs).flatMap(decodeTab);
   if (!tabs.length) tabs.push(...initialWorkspace().tabs);
@@ -55,13 +60,14 @@ function decodeBounds(value: unknown): Bounds {
   };
 }
 
-export function loadState(root: string, accounts: readonly Account[] = starterAccounts): Saved {
+export function loadState(root: string, accounts: readonly Account[] = starterAccounts,
+  mailboxes: Record<string, Mailbox> = {}): Saved {
   try {
     const data: unknown = JSON.parse(readFileSync(path.join(root, 'window-state.json'), 'utf8'));
     if (!object(data) || data.version !== 1 || !object(data.workspaces)) throw new Error('标签恢复文件格式无效。');
     const workspaces = data.workspaces;
     const tabIds = new Set<string>();
-    return { version: 1, workspaces: Object.fromEntries(accounts.map(id => [id, decodeWorkspace(workspaces[id], tabIds)])),
+    return { version: 1, workspaces: Object.fromEntries(accounts.map(id => [id, decodeWorkspace(workspaces[id], tabIds, mailboxes)])),
       bounds: decodeBounds(data.bounds) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;

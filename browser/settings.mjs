@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 
 export const accounts = ['A', 'B'];
 export const maxProfiles = 32;
+export const maxMailboxes = 32;
 
 function validAccountId(id) {
   return accounts.includes(id) ||
@@ -14,7 +15,8 @@ export const defaults = {
   profiles: {
     A: { language: 'en-US', zone: 'Asia/Shanghai', mail: '' },
     B: { language: 'en-US', zone: 'America/Los_Angeles', mail: '' }
-  }
+  },
+  mailboxes: {}
 };
 
 export function checkAccount(id) {
@@ -48,6 +50,35 @@ export function checkProfile(profile) {
   return { language, zone, mail, ...(name !== undefined ? { name: name.trim() } : {}) };
 }
 
+export const validMailboxId = id => typeof id === 'string' && !accounts.includes(id) && validAccountId(id);
+
+export function checkMailbox(draft) {
+  if (!draft || typeof draft !== 'object') throw new Error('邮箱设置格式错误。');
+  const { name, address, url } = draft;
+  if (typeof name !== 'string' || !name.trim() || name.length > 40 || /[\u0000-\u001f\u007f]/.test(name)) {
+    throw new Error('请输入 1–40 个字符的邮箱名称。');
+  }
+  if (typeof address !== 'string' || address.length > 254 || !/^[^\s@\x00-\x1f\x7f]+@[^\s@\x00-\x1f\x7f]+\.[^\s@\x00-\x1f\x7f]+$/.test(address.trim())) {
+    throw new Error('请输入用于辨认这个邮箱的邮箱地址。');
+  }
+  if (!url) throw new Error('请输入 HTTPS 邮箱主页。');
+  const checked = checkProfile({ language: 'system', zone: 'system', mail: url });
+  const home = new URL(checked.mail);
+  if (/(?:^|\.)claude\.ai\.?$/i.test(home.hostname)) throw new Error('请输入邮箱服务的主页。');
+  return { name: name.trim(), address: address.trim(), url: home.href };
+}
+
+export function addMailbox(settings, draft) {
+  const entries = Object.values(settings.mailboxes);
+  if (entries.length >= maxMailboxes) throw new Error('邮箱空间已达上限。');
+  const mailbox = checkMailbox(draft);
+  if (entries.some(item => item.address.toLowerCase() === mailbox.address.toLowerCase())) {
+    throw new Error('这个邮箱已经添加，请直接选择使用。');
+  }
+  const id = randomUUID();
+  return { id, settings: { ...settings, mailboxes: { ...settings.mailboxes, [id]: mailbox } } };
+}
+
 export function profilePath(root, id) {
   return path.join(root, 'profiles', checkAccount(id));
 }
@@ -70,7 +101,15 @@ export async function loadSettings(root) {
     if (!accounts.includes(id) && !profile.name) throw new Error('自建账号缺少名称。');
     return [id, profile];
   }));
-  return { port: data.port, profiles };
+  const mailboxData = data.mailboxes === undefined ? {} : data.mailboxes;
+  if (!mailboxData || typeof mailboxData !== 'object' || Array.isArray(mailboxData)) throw new Error('邮箱空间配置格式错误。');
+  const mailboxEntries = Object.entries(mailboxData);
+  if (mailboxEntries.length > maxMailboxes) throw new Error('邮箱空间配置超过允许的数量。');
+  const mailboxes = Object.fromEntries(mailboxEntries.map(([id, value]) => {
+    if (!validMailboxId(id)) throw new Error('邮箱空间标识无效。');
+    return [id, checkMailbox(value)];
+  }));
+  return { port: data.port, profiles, mailboxes };
 }
 
 export function addProfile(settings, draft) {

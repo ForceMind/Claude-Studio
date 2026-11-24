@@ -155,3 +155,41 @@ test('弹窗给出脱敏失败阶段，普通标签仍等待本地引导和时�
   assert.equal(await preferences, true);
   assert.deepEqual(await request, { cancel: false });
 });
+
+test('邮箱分区拦截 Claude 请求，只向已登记的顶层 GET 发起选择，邮箱 OAuth 保留原会话', async () => {
+  const { network, sessions } = makeNetwork();
+  const mailbox = await network.connect('mailbox:synthetic-1', 42873, profile);
+  const sameMailbox = await network.connect('mailbox:synthetic-1', 42873, profile);
+  const otherMailbox = await network.connect('mailbox:synthetic-2', 42873, profile);
+  const accountA = await network.connect('A', 42873, profile);
+  assert.equal(mailbox, sameMailbox);
+  assert.notEqual(mailbox.session, otherMailbox.session);
+  assert.notEqual(mailbox.session, accountA.session);
+  assert.equal(sessions.get('persist:mailbox-synthetic-1'), mailbox.session);
+  const source = makeContents(22, mailbox.session, async () => {});
+  const a = makeContents(23, accountA.session, async () => {});
+  const offered = [];
+  await network.preparePopup(source, mailbox, url => offered.push(url));
+  await network.preparePopup(a, accountA);
+  const url = 'https://claude.ai/login?code=synthetic';
+  const request = { method: 'GET', webContentsId: source.id, url };
+  for (const extra of [
+    { method: 'POST' }, { resourceType: 'subFrame' }, { resourceType: 'xhr' },
+    { webContentsId: a.id }, { url: 'http://claude.ai/login' },
+    { url: 'https://claude.ai:449/login' }, { url: 'https://claude.ai./login' },
+    { url: 'https://fake.claude.ai/login' }, { url: 'https://name:pass@claude.ai/login' },
+    { uploadData: [{}] }
+  ]) assert.deepEqual(await navigation(mailbox.session, { ...request, ...extra }), { cancel: true });
+  assert.deepEqual(offered, []);
+  assert.deepEqual(await navigation(mailbox.session, request), { cancel: true });
+  assert.deepEqual(offered, [url]);
+  assert.deepEqual(await navigation(mailbox.session, { ...request, url: 'https://claude.ai.example.test/login' }), {});
+  assert.deepEqual(offered, [url]);
+  assert.deepEqual(await navigation(mailbox.session, { ...request, method: 'POST', url: 'https://accounts.google.com/signin' }), {});
+  assert.deepEqual(await navigation(accountA.session, { ...request, webContentsId: a.id }), {});
+  await network.flushStorage();
+  assert.ok(mailbox.session.storageFlushed && mailbox.session.cookiesFlushed);
+  source.emit('destroyed');
+  assert.deepEqual(await navigation(mailbox.session, request), { cancel: true });
+  assert.deepEqual(offered, [url]);
+});

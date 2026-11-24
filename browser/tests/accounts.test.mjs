@@ -20,7 +20,7 @@ test('首次使用默认美国英语，升级保留 A/B 偏好并为新增账号
       }
     };
     await saveSettings(root, old);
-    assert.deepEqual(await loadSettings(root), old);
+    assert.deepEqual(await loadSettings(root), { ...old, mailboxes: {} });
     const saved = loadState(root);
     const oldA = makeTab('https://claude.ai/chat/one');
     const oldB = makeTab('https://mail.example.test/');

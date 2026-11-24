@@ -2,7 +2,7 @@
 
 [官网](https://claude-studio-1pm.pages.dev/) · [GitHub Pages 镜像](https://forcemind.github.io/Claude-Studio/) · [下载 Windows x64 便携版 v0.3.1](https://github.com/ForceMind/Claude-Studio/releases/download/v0.3.1/ClaudeBrowser.exe)
 
-GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.7.1**，增加 Windows 安装目录选择。0.7.0 已完成安装版自动更新的本机自签测试。正式签名的安装版与线上更新清单尚待发布。验收结果和接手位置见 [路线图](ROADMAP.md#windows-070-接手)。
+GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.8.0**，加入 Windows 邮箱空间。0.7.1 起可在安装向导选择程序目录。0.7.0 已完成安装版自动更新的本机自签测试。正式签名的安装版与线上更新清单尚待发布。验收结果和接手位置见 [路线图](ROADMAP.md#windows-070-接手)。
 
 ## 选择 Windows 版本
 
@@ -17,7 +17,7 @@ GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.7.1**�
 
 点「检测出口」后，本账户会通过自己的 Chromium 会话和本地代理向 [ipify](https://www.ipify.org/) 查询其观测到的公网 IP。结果按账户保存在本次运行中，带检测时间。代理断开或重新配置后需重新检测。
 
-- 第一次使用时，在「账户与代理设置」点「自动识别」，读取 Windows 已开启的单一本机 HTTP 代理端口，也可以手动填写。保存后端口才生效。网页语言、时区和邮箱可以下拉选择或自定义。初始配置和新建账户的网页语言默认使用英语（美国），已有账户保留原设置。时区按中文城市和地区显示，附当前 UTC 偏移与 IANA 标识，并按当地时区规则切换夏令时。中文相关的预设放在末尾。未设置邮箱时默认使用 Gmail。
+- 第一次使用时，在「账户与代理设置」点「自动识别」，读取 Windows 已开启的单一本机 HTTP 代理端口，也可以手动填写。保存后端口才生效。网页语言、时区和邮箱服务可以下拉选择或自定义。初始配置和新建账户的网页语言默认使用英语（美国），已有账户保留原设置。时区按中文城市和地区显示，附当前 UTC 偏移与 IANA 标识，并按当地时区规则切换夏令时。中文相关的预设放在末尾。未设置邮箱时默认使用 Gmail。
 - 每个账户使用独立的持久会话，登录窗口保留发起页面的账户和 opener。切换账户时会切换标签，并隐藏其他账户的弹窗。
 - `Ctrl+T` 新建标签，`Ctrl+W` 关闭当前标签，`Ctrl+Shift+T` 恢复最近关闭的标签，`Ctrl+L` 聚焦地址栏。右键标签可固定，拖动同组标签可调整顺序。窗口菜单提供切换、导航和全屏操作。
 - 下次启动会恢复每个账户的标签和选中页。保存的网页地址省略查询参数、片段及识别出的临时认证地址。登录是否保持取决于网站会话。
@@ -28,6 +28,12 @@ GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.7.1**�
 
 - 「账户与代理设置」支持上移、下移、清除指定账号的本机登录及移除账号。移除会删除对应空间、本机网站资料和标签记录，至少保留一个账号。清理需要确认，会关闭该账号的页面和授权窗口并清除 Cookie、网站存储及缓存。该账号的网页本地草稿可能一并清除。账号设置和安全的标签地址仍可恢复。
 - 窗口变窄时，「查看全部标签」接管放不下的标签，当前标签保持可见。撤销关闭会优先接回原网页。最多暂存 5 个普通网页，最长 10 分钟。超时后按可恢复的网址重新加载。登录、验证页面和关机前关闭的页面走常规恢复规则。
+
+## 邮箱空间
+
+1. 在工具栏点击「邮箱」，进入「邮箱空间」，添加用于辨认的邮箱名称、地址和邮箱服务。添加后会在当前账号打开该邮箱，在服务商页面登录即可。默认服务为 Gmail。
+2. 切到另一个 Claude 账号，从「邮箱」菜单选同一个邮箱会在那个账号打开自己的邮箱标签。每个邮箱单独保存登录，打开同一邮箱的多个标签共用该邮箱登录。旧账号专用邮箱仍从「此账号的旧邮箱」打开。首次在独立邮箱空间使用时需要登录一次。
+3. 邮件打开可识别的 claude.ai 顶层 HTTPS 链接时，选择框默认选来源 Claude 账号。可改选其他账号，确认后在目标账号新建 Claude 标签。取消回到原邮件。Claude 的 Cookie、本地资料和标签按 Claude 账号隔离。邮箱自身的登录流程仍使用邮箱会话。
 
 ## Windows 自动更新
 
@@ -43,6 +49,6 @@ GitHub 发布时，安装包使用版本标签 `windows-setup-v<version>` 下的
 
 本机固定更新目录由工作树里的 .browser-local/install-directory.txt 指定。通过包检查后，构建会把更新后的 ClaudeBrowser.exe 复制到该目录。
 
-开发环境需要 Windows x64 和 Node.js 22.18 或更新版本。在浏览器工作树运行 `npm.cmd ci`、`npm.cmd run setup` 和 `npm.cmd run build`。构建先在 `release/` 生成便携包，解包验证后更新根目录 `ClaudeBrowser.exe`。便携版可用 `npm.cmd run verify:package` 复核根目录的包。安装版用 npm.cmd run build:installer 构建到 release/windows/installer，可用 npm.cmd run verify:package -- --installer 复核。安装版构建和便携版更新策略分开。
+开发环境需要 Windows x64 和 Node.js 22.18 或更新版本。在浏览器工作树运行 `npm.cmd ci`、`npm.cmd run setup` 和 `npm.cmd run build`。构建先在 `release/` 生成便携包，解包验证后更新根目录 `ClaudeBrowser.exe`。便携版可用 `npm.cmd run verify:package` 复核根目录的包。安装版用 npm.cmd run build:installer 构建到 release/windows/installer，可用 npm.cmd run verify:package -- --installer 复核。安装版构建和便携版更新策略分开。给打包命令附加 -- --check-only 可生成独立检查包到 release/windows/checks/<version>/，适合只检查代码和包内容。
 
 `npm.cmd run typecheck` 检查 Electron 和 React 代码的类型。`npm.cmd test` 使用合成地址、临时设置和回环代理验证账户、导航恢复及代理故障。EXE 校验直接读取包内的 x64 内核、入口和渲染资源。公开官网本轮采用静态检查，桌面应用的自签升级另有合成会话实测。代理端口可连接仅表示 TCP 监听正常。实际站点登录、语言和时区读数、DNS 代发及宿主联网对照见[浏览器分支路线图](ROADMAP.md#浏览器原型分支)。

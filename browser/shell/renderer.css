@@ -282,3 +282,33 @@ p { margin: 0; color: var(--muted); }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+.mail-entry { position: relative; flex: none; }
+.mail-entry .destination[aria-expanded="true"] { color: var(--accent); background: #f7ebe3; }
+.mail-entry .destination > svg:last-child { width: 12px; height: 12px; }
+.mail-picker {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 4;
+  display: grid; gap: 8px; width: 272px; padding: 12px;
+  border: 1px solid var(--stroke); border-radius: 10px; background: #fff;
+  box-shadow: 0 8px 26px #392c2221;
+}
+.mail-picker .hint { margin: 0; }
+.mail-picker-backdrop { position: absolute; inset: 92px 0 0; z-index: 2; }
+.mailbox-list { display: grid; gap: 4px; max-height: min(30vh, 240px); overflow: auto; }
+.mailbox-list:empty { display: none; }
+.mailbox-item {
+  display: flex; gap: 8px; align-items: center; width: 100%; padding: 7px;
+  border: 1px solid transparent; border-radius: 7px; background: none; text-align: left; color: inherit;
+}
+.mailbox-item:hover, .mailbox-item:focus-visible { border-color: #e5c8b8; background: #f9eee8; }
+.mailbox-item > svg { flex: none; color: var(--accent); }
+.mailbox-item > span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.mailbox-item small, .claude-link-option small { color: var(--muted); }
+.claude-link-dialog { max-width: 456px; }
+.claude-link-dialog .claude-link-option {
+  display: flex; align-items: center; gap: 8px; min-height: 37px;
+  padding: 5px 8px; border: 1px solid var(--stroke); border-radius: 7px; overflow-wrap: anywhere;
+}
+.claude-link-dialog .claude-link-option input { width: auto; margin: 0; height: auto; accent-color: var(--accent); }
+.claude-link-option:has(:checked) { background: #f9eee8; }
+.claude-link-option small { margin-left: auto; flex: none; }
