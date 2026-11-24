@@ -181,7 +181,12 @@ test('邮箱分区拦截 Claude 请求，只向已登记的顶层 GET 发起选�
     { uploadData: [{}] }
   ]) assert.deepEqual(await navigation(mailbox.session, { ...request, ...extra }), { cancel: true });
   assert.deepEqual(offered, []);
-  assert.deepEqual(await navigation(mailbox.session, request), { cancel: true });
+  source.stopped = false;
+  const reply = await new Promise(resolve => mailbox.session.request({ resourceType: 'mainFrame', ...request }, response => {
+    assert.equal(source.stopped, true, 'abort the source navigation before rejecting the network request');
+    resolve(response);
+  }));
+  assert.deepEqual(reply, { cancel: true });
   assert.deepEqual(offered, [url]);
   assert.deepEqual(await navigation(mailbox.session, { ...request, url: 'https://claude.ai.example.test/login' }), {});
   assert.deepEqual(offered, [url]);

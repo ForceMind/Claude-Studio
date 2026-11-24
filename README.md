@@ -2,7 +2,7 @@
 
 [官网](https://claude-studio-1pm.pages.dev/) · [GitHub Pages 镜像](https://forcemind.github.io/Claude-Studio/) · [下载 Windows x64 便携版 v0.3.1](https://github.com/ForceMind/Claude-Studio/releases/download/v0.3.1/ClaudeBrowser.exe)
 
-GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.8.0**，加入 Windows 邮箱空间。0.7.1 起可在安装向导选择程序目录。0.7.0 已完成安装版自动更新的本机自签测试。正式签名的安装版与线上更新清单尚待发布。验收结果和接手位置见 [路线图](ROADMAP.md#windows-070-接手)。
+GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.8.1**，保留 Windows 邮箱空间，并修复同页 Claude 登录链接覆盖原邮件的问题。0.7.1 起可在安装向导选择程序目录。0.7.0 已完成安装版自动更新的本机自签测试。正式签名的安装版与线上更新清单尚待发布。验收结果和接手位置见 [路线图](ROADMAP.md#windows-070-接手)。
 
 ## 选择 Windows 版本
 

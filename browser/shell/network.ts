@@ -22,7 +22,7 @@ export const securePreferences: WebPreferences = {
 export class AccountNetwork {
   private entries = new Map<Account, Connection>();
   private sessions = new Map<Account, Session>();
-  private mainFrames = new Map<number, { space: Space; ready?: Promise<boolean>; requestLink?: LinkRequest }>();
+  private mainFrames = new Map<number, { contents: WebContents; space: Space; ready?: Promise<boolean>; requestLink?: LinkRequest }>();
 
   readonly exits: ExitChecks;
 
@@ -89,12 +89,17 @@ export class AccountNetwork {
         accountSession.webRequest.onBeforeRequest(webFilters, (details, callback) => {
           const activeSpace = this.entries.get(id)?.space;
           if (isMailboxSpace(id) && isClaudeSite(details.url)) {
-            callback({ cancel: true });
-            const target = details.resourceType === 'mainFrame' && details.method === 'GET' &&
-              !details.uploadData?.length && transferableClaudeURL(details.url);
             const contentsId = details.webContentsId ?? details.webContents?.id;
             const frame = contentsId === undefined ? undefined : this.mainFrames.get(contentsId);
-            if (target && activeSpace?.relay.online && frame?.space === activeSpace) frame?.requestLink?.(target);
+            const registeredMainFrame = details.resourceType === 'mainFrame' && frame && frame.space === activeSpace &&
+              !frame.contents.isDestroyed() ? frame : undefined;
+            const target = registeredMainFrame && activeSpace?.relay.online && details.method === 'GET' &&
+              !details.uploadData?.length && transferableClaudeURL(details.url);
+            // Cancel the navigation in Chromium before rejecting the request to preserve the source document.
+            try { registeredMainFrame?.contents.stop(); }
+            catch { /* The frame can close while the request is being intercepted. */ }
+            finally { callback({ cancel: true }); }
+            if (target) registeredMainFrame?.requestLink?.(target);
             return;
           }
           if (!activeSpace?.relay.online) {
@@ -141,7 +146,7 @@ export class AccountNetwork {
 
   private registerFrame(contents: WebContents, space: Space, ready?: Promise<boolean>, requestLink?: LinkRequest): void {
     const id = contents.id;
-    this.mainFrames.set(id, { space, ready, requestLink });
+    this.mainFrames.set(id, { contents, space, ready, requestLink });
     contents.once('destroyed', () => this.mainFrames.delete(id));
   }
 

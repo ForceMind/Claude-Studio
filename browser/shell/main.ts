@@ -48,6 +48,8 @@ type LiveTab = {
   account: Account;
   mailboxId?: string;
   handoff?: boolean;
+  lastMailboxPage?: string;
+  recoveringMailboxPage?: boolean;
   space: Space;
   view: WebContentsView;
   cachedMute?: boolean;
@@ -332,7 +334,7 @@ function configureRemote(contents: WebContents, owner: Account, space: Space, so
         });
         popup.once('closed', () => popups.delete(popup));
         void network.preparePopup(guest, space, requestLink && (link => {
-          if (!popup.isDestroyed() && !webURL(guest.getURL())) popup.destroy();
+          if (!popup.isDestroyed() && (!webURL(guest.getURL()) || isClaudeSite(guest.getURL()))) popup.destroy();
           requestLink(link);
         })).then(failure => {
           if (popup.isDestroyed()) return;
@@ -371,7 +373,26 @@ function constructTab(owner: Account, tab: Tab, space: Space, guest?: WebContent
   configureRemote(contents, owner, space, tab.id, tab.mailboxId);
   function update(patch: Page = {}): void {
     if (live.get(tab.id) !== entry || contents.isDestroyed()) return;
-    const url = displayTabURL(entry, contents.getURL());
+    const currentURL = contents.getURL();
+    if (tab.mailboxId && isClaudeSite(currentURL)) {
+      // Some Chromium navigation paths still commit an error document. Keep the token out of shell state.
+      if (entry.recoveringMailboxPage) return;
+      entry.recoveringMailboxPage = true;
+      const original = entry.lastMailboxPage;
+      setImmediate(() => {
+        if (live.get(tab.id) !== entry || contents.isDestroyed() || !isClaudeSite(contents.getURL())) return;
+        const fail = () => {
+          if (live.get(tab.id) !== entry) return;
+          Object.assign(entry.page, { loading: false, error: '邮件原页面未能恢复。请重新打开邮箱。' });
+          publish();
+        };
+        if (original) void contents.loadURL(original).catch(fail);
+        else fail();
+      });
+      return;
+    }
+    entry.recoveringMailboxPage = false;
+    const url = displayTabURL(entry, currentURL);
     Object.assign(entry.page, patch, {
       url, back: contents.navigationHistory.canGoBack(), forward: contents.navigationHistory.canGoForward()
     });
@@ -379,7 +400,9 @@ function constructTab(owner: Account, tab: Tab, space: Space, guest?: WebContent
   }
   function navigated(url: string): void {
     if (live.get(tab.id) !== entry || contents.isDestroyed()) return;
+    if (tab.mailboxId && isClaudeSite(url)) { update(); return; }
     const clean = entry.handoff ? restorableHandoffURL(url) : restorableURL(url);
+    if (tab.mailboxId) entry.lastMailboxPage = clean === url && webURL(url)?.protocol === 'https:' ? clean : undefined;
     if (clean && clean !== tab.url) {
       tab.url = clean;
       persist();
@@ -440,7 +463,7 @@ function adoptLinkedTab(owner: Account, sourceTabId: string, guest: WebContents,
     void serialize(() => {
       if (closing || owner !== account || work.active !== tab.id || live.get(tab.id) !== entry) return;
       const opener = work.tabs.find(item => item.id === sourceTabId && item.mailboxId === mailboxId);
-      if (opener && !webURL(guest.getURL())) {
+      if (opener && (!webURL(guest.getURL()) || isClaudeSite(guest.getURL()))) {
         work.active = opener.id;
         closeTab(tab.id, owner, false);
         offerClaudeLink(owner, opener.id, mailboxId, link);
