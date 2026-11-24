@@ -1,6 +1,15 @@
 # Claude Browser Android 合成原型
 
-本目录是独立 Kotlin / 系统 WebView 合成原型，版本 `0.5.0-prototype.2`（`versionCode=50002`）。移植以 Windows 0.5.0 源码快照的账号和标签边界为基线。GitHub Actions 已完成官网和 Play 两个 Debug 包的构建、lint 和签名校验，10 项静态检查和每渠道各 15 项 JVM 测试通过。两个测试 APK 和 SHA-256 见 [Actions 产物](https://github.com/ForceMind/Claude-Studio/actions/runs/45220367140/artifacts/14840242885)。设备 WebView 和真实站点仍待验收。
+本目录是独立 Kotlin / 系统 WebView 合成原型，版本 `0.6.0-prototype.1`（`versionCode=60001`）。账号和标签以 Windows 0.5.0 快照为基线，本批同步 Windows 0.6.0 的账号移除交互。设备 WebView 和真实站点仍待验收。
+
+## Debug APK
+
+GitHub Actions 在提交 `a93de6ee730b8236f1e5d04c358ccaf0a0397535` 的第二次运行中通过 11 项静态检查及每渠道 20 项 JVM 测试，两个渠道均通过 lint、构建、包名和 Debug 签名校验。产物包含 APK、测试和签名记录、包名记录及 SHA-256，保留 7 天。[Android 作业](https://github.com/ForceMind/Claude-Studio/actions/runs/45338625613/job/138276104882) · [下载两个 Debug APK](https://github.com/ForceMind/Claude-Studio/actions/runs/45338625613/artifacts/14897736566)
+
+| 文件 | 包名 | SHA-256 |
+| --- | --- | --- |
+| `app-website-debug.apk` | `dev.claudestudio.browser.website.debug` | `570238e878d30729029ed0b53562e60c8c32b8718f2928cf85b7082a1e0b438d` |
+| `app-play-debug.apk` | `dev.claudestudio.browser.play.debug` | `bf4a30f39c3653b53e7bf5faea62ea5a87936f0a9a8e974d96b55e0c0fdf2af9` |
 
 ## 已实现的入口
 
@@ -10,7 +19,9 @@
 - 「账号设置」可交换 A/B 顺序。顺序随布局保存，旧布局默认 A 后 B，资料标识和已保存标签保持原样。
 - 窄屏保留活动标签，其余从「更多」切换。「撤销关闭」按账号恢复普通合成页，最多保留 5 个原 WebView，时限为 10 分钟。容量淘汰后，该时限内仍可重新加载安全合成页。过期、异常导航及弹窗退出会丢弃对应恢复记录。
 - 清除某账号的本机登录需要确认。具备 `DELETE_BROWSING_DATA` 时，关闭该账号的全部活动和缓存页面，清除其 Profile 中的 Cookie、网站存储和缓存。清理意图在重启后可继续，回调确认完成后才能再打开目标账号的页面，其他账号仍可用。已保存标签地址保留。此流程的设备效果待验证。[WebStorageCompat](https://developer.android.com/reference/androidx/webkit/WebStorageCompat.html)
-- 每账户最多 12 个标签；应用重开保留 A/B 布局、所选标签与资料 Profile。已关闭的弹窗标签移除。进程重建后的弹窗按普通标签恢复 URL，不能恢复旧的 `window.opener` 或进行中的认证事务。损坏或不认识的布局版本保留原始值并关闭入口。
+- 在「账号设置」选中账号后可点「移除账号」。确认框显示目标账号，默认焦点在「取消」。确认后关闭目标账号的页面并清理其 Profile，回调成功后移除该账号的列表条目和保存的标签。移除当前账号会切换到剩余账号，移除另一账号时保持原选择。只剩一个账号时移除按钮不可用，当前原型暂未提供重新添加入口。
+- 清理期间目标账号暂停打开页面，另一账号仍可使用。若清理或保存失败，会保留账号条目及待完成记录，可再次重试，重开应用也会继续已确认的清理。重试恢复的是清理流程，已清除的登录或网站资料无法恢复。
+- 每账户最多 12 个标签，应用重开时保留现有账号布局、所选标签与资料 Profile，兼容旧 A/B 布局。已关闭的弹窗标签移除。进程重建后的弹窗按普通标签恢复 URL，不能恢复旧的 `window.opener` 或进行中的认证事务。损坏或不认识的布局版本保留原始值并关闭入口。
 - 共同 HTTP 上游仅接受明确的数字 IPv4 与端口，本次运行锁定。`PROXY_OVERRIDE` 不可用、输入无效、调用失败或应用回调尚未到达时，不创建和导航页面。不添加 DIRECT 或绕过列表；通过 `removeImplicitRules()` 去掉默认 localhost/link-local 绕过。不改 Android 系统代理。
 - 合成页是 `assets/demo.html` 与 `assets/popup.html`，使用 `WebViewAssetLoader`。代理应用成功后，点击 A/B 或新标签才加载。所有 WebView 仍设置 `blockNetworkLoads=true`，资源拦截器仅放行这两个完整 URL。可分别写入随机合成 Cookie/localStorage，并从同账户合成弹窗读回；不自动打开任何网页。
 
@@ -50,7 +61,7 @@ gradle --no-daemon :app:assembleWebsiteDebug :app:assemblePlayDebug
 gradle --no-daemon :app:lintWebsiteDebug :app:lintPlayDebug
 ```
 
-`UpdatePolicyTest.kt` 覆盖启动、普通恢复、午前检查、在途中跨午、睡眠跨日、冷启动不补历史、退避/恢复、无效配置、在途去重与 UTC 映射。工作流要求两个渠道各有非空 JVM 测试结果，校验 Debug APK 的包标识和签名，再把两份 APK 及 SHA-256 上传为短期 Actions 产物。设备 WebView 使用单独验收。
+`UpdatePolicyTest.kt` 覆盖启动、普通恢复、午前检查、在途中跨午、睡眠跨日、冷启动不补历史、退避/恢复、无效配置、在途去重与 UTC 映射。`AccountRemovalTest.kt` 覆盖旧布局、移除后选择规则、最后一个账号保护、在途互斥以及失败和重启后续做。工作流要求两个渠道各有非空 JVM 测试结果，校验 Debug APK 的包标识和签名，再把两份 APK 及 SHA-256 上传为短期 Actions 产物。设备 WebView 使用单独验收。
 
 实机授权后还需：记录 Android/WebView 版本和能力位，交错写入 A/B Cookie 与 localStorage、重开和升级后读回，检查弹窗首请求/opener、独立标签，注入共同代理失败和恢复并观察代理/目标/DNS/宿主对照，检查各更新触发与用户拒绝安装，最后分别使用官网及 Play 测试升级。当前这些项目均未验证。
 
