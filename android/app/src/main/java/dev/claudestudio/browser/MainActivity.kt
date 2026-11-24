@@ -3,7 +3,9 @@ package dev.claudestudio.browser
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
+import android.content.SharedPreferences
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Bundle
@@ -11,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.os.SystemClock
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.RenderProcessGoneDetail
@@ -21,6 +24,8 @@ import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebStorageCompat
@@ -46,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var pageStatus: TextView
     private lateinit var updateStatus: TextView
     private lateinit var updates: UpdateClient
+    private var sessionObserver: SharedPreferences.OnSharedPreferenceChangeListener? = null
     private var profilesReady = false
     private var active = false
     private var destroyed = false
@@ -91,7 +97,12 @@ class MainActivity : Activity() {
         root.addView(pageHost, LinearLayout.LayoutParams(-1, 0, 1f))
         profilesReady = initializeProfiles()
         renderAccounts()
-        if (profilesReady) sessions.accountOrder.filter(sessions.loginCleanup.isPending).forEach(::clearLogin)
+        if (profilesReady) {
+            sessionObserver = sessions.observeChanges({ handler.post(::refreshAccountsAfterRemoval) }, ::releaseAccountContents)
+            sessions.accountOrder.forEach { account ->
+                sessions.loginCleanup.pendingAction(account)?.let { startCleanup(account, it) }
+            }
+        }
         try {
             connectivity = getSystemService(ConnectivityManager::class.java)
             connectivity?.registerDefaultNetworkCallback(networkCallback)
@@ -116,62 +127,135 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun canOpen(account: String): Boolean = profilesReady && gate.ready && !sessions.loginCleanup.isPending(account)
+    private fun canOpen(account: String): Boolean = profilesReady && gate.ready &&
+        sessions.hasCurrentAccount(account) && !sessions.loginCleanup.isPending(account)
 
     private fun showAccountSettings() {
         if (!profilesReady) return
         val order = sessions.accountOrder
-        val options = (listOf("交换账号顺序") + order.map { "清除账号 $it 的本机登录" }).toTypedArray()
-        AlertDialog.Builder(this).setTitle("账号设置").setItems(options) { _, index ->
-            if (index == 0) {
-                sessions.swapAccounts()
-                if (persist()) renderAccounts()
-            } else {
-                val account = order[index - 1]
-                AlertDialog.Builder(this).setTitle("清除账号 $account 的本机登录？")
-                    .setMessage("该账号的 Cookie、网站存储和缓存将清除，本地草稿可能丢失。已保存的标签地址仍可打开。")
-                    .setNegativeButton("取消", null).setPositiveButton("清除") { _, _ -> clearLogin(account) }.show()
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (20 * resources.displayMetrics.density).toInt()
+            setPadding(padding, padding, padding, padding)
+        }
+        val accounts = RadioGroup(this).also { content.addView(it) }
+        val choices = order.associateBy { account ->
+            RadioButton(this).apply { id = View.generateViewId(); text = "账号 $account" }.also(accounts::addView).id
+        }
+        var selected = sessions.activeAccount
+        accounts.check(choices.entries.first { it.value == selected }.key)
+        val dialog = AlertDialog.Builder(this).setTitle("账号设置").setView(content)
+            .setNegativeButton("关闭", null).create()
+        button(content, "交换账号顺序") {
+            dialog.dismiss()
+            sessions.swapAccounts()
+            if (persist()) renderAccounts()
+        }.isEnabled = order.size > 1
+        val clear = button(content, "清除本机登录") {
+            confirmCleanup(selected, CleanupAction.CLEAR, dialog::dismiss)
+        }
+        val remove = button(content, "移除账号…") {
+            confirmCleanup(selected, CleanupAction.REMOVE, dialog::dismiss)
+        }.also { it.setTextColor(removalColors) }
+        val hint = TextView(this).also { content.addView(it) }
+        fun showActions() {
+            val cleanup = sessions.loginCleanup
+            val pending = cleanup.pendingAction(selected)
+            val running = cleanup.isRunning(selected)
+            clear.isEnabled = !running && pending != CleanupAction.REMOVE
+            remove.isEnabled = !running && sessions.mayRemove(selected)
+            remove.text = if (pending == CleanupAction.REMOVE && !running) "重试移除账号…" else "移除账号…"
+            hint.text = when {
+                order.size == 1 -> "需保留至少一个账号。"
+                running && pending == CleanupAction.REMOVE -> "正在移除账号 $selected。"
+                pending == CleanupAction.REMOVE -> "账号 $selected 的清理未完成，可重试。"
+                else -> ""
             }
-        }.show()
+            hint.visibility = if (hint.text.isEmpty()) View.GONE else View.VISIBLE
+        }
+        accounts.setOnCheckedChangeListener { _, id ->
+            choices[id]?.let { selected = it; showActions() }
+        }
+        showActions()
+        dialog.show()
     }
 
-    private fun clearLogin(account: String) {
-        if (!profilesReady || destroyed) return
+    private fun confirmCleanup(account: String, action: CleanupAction, confirmed: () -> Unit) {
+        if (!profilesReady || !sessions.hasCurrentAccount(account)) return
+        val removing = action == CleanupAction.REMOVE
+        if (removing && !sessions.mayRemove(account)) return
+        val retained = sessions.accountOrder.filterNot { it == account }.joinToString("、")
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(if (removing) "移除账号 $account？" else "清除账号 $account 的本机登录？")
+            .setMessage(if (removing) "将清除 $account 的本机登录、网站资料和标签。账号 $retained 仍可使用。Android 原型暂不支持加回。"
+                else "该账号的 Cookie、网站存储和缓存将清除，本地草稿可能丢失。已保存的标签地址仍可打开。")
+            .setNegativeButton("取消", null)
+            .setPositiveButton(if (removing) "移除 $account" else "清除") { _, _ ->
+                confirmed()
+                startCleanup(account, action)
+            }
+            .show()
+        if (removing) dialog.getButton(AlertDialog.BUTTON_POSITIVE).setTextColor(removalColors)
+        dialog.getButton(AlertDialog.BUTTON_NEGATIVE).requestFocus()
+    }
+
+    private fun startCleanup(account: String, action: CleanupAction) {
+        if (!profilesReady || destroyed || !sessions.hasCurrentAccount(account)) return
+        if (action == CleanupAction.REMOVE && !sessions.mayRemove(account)) return
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.DELETE_BROWSING_DATA)) {
-            pageStatus.text = "当前 WebView 不支持按账号清除本机登录。"
+            pageStatus.text = "当前 WebView 不支持按账号清理本机资料。"
             return
         }
         val cleanup = sessions.loginCleanup
-        val token = try { cleanup.begin(account) } catch (_: RuntimeException) {
+        val token = try { cleanup.begin(account, action) } catch (_: RuntimeException) {
             pageStatus.text = "无法保存清理状态，请重试。"
             return
         } ?: return
         val activity = WeakReference(this)
         try {
             val profile = checkNotNull(ProfileStore.getInstance().getProfile(profileName(account)))
-            views.keys.filter { it.first == account }.forEach { key -> views.remove(key)?.let(::destroyView) }
-            closedTabs.clear(account)
-            scheduleTabExpiry()
-            if (sessions.activeAccount == account) renderTabs()
-            pageStatus.text = "正在清除账号 $account 的本机登录。"
+            releaseAccountContents(account)
+            pageStatus.text = if (action == CleanupAction.REMOVE) "正在移除账号 $account…" else "正在清除账号 $account 的本机登录。"
             WebStorageCompat.deleteBrowsingData(profile.webStorage) {
                 val completed = try { cleanup.finish(account, token) } catch (_: RuntimeException) {
-                    activity.get()?.onLoginCleanupFinished(account, false)
+                    activity.get()?.onCleanupFinished(account, action, false)
                     return@deleteBrowsingData
                 }
-                if (completed) activity.get()?.onLoginCleanupFinished(account, true)
+                if (completed) activity.get()?.onCleanupFinished(account, action, true)
             }
         } catch (_: RuntimeException) {
             cleanup.fail(account, token)
-            onLoginCleanupFinished(account, false)
+            onCleanupFinished(account, action, false)
         }
     }
 
-    private fun onLoginCleanupFinished(account: String, completed: Boolean) {
+    private fun releaseAccountContents(account: String) {
+        views.keys.filter { it.first == account }.forEach { key -> views.remove(key)?.let(::destroyView) }
+        closedTabs.clear(account)
+        scheduleTabExpiry()
+        if (sessions.activeAccount == account) renderTabs()
+    }
+
+    private fun refreshAccountsAfterRemoval() {
         if (destroyed || !profilesReady) return
-        if (completed && sessions.activeAccount == account && canOpen(account)) showSelected()
-        pageStatus.text = if (completed) "已清除账号 $account 的本机登录。"
-            else "账号 $account 的本机登录清理未完成，请在账号设置重试。"
+        if (sessions.refreshMembership()) {
+            renderAccounts()
+            showSelected()
+        }
+    }
+
+    private fun onCleanupFinished(account: String, action: CleanupAction, completed: Boolean) {
+        if (destroyed || !profilesReady) return
+        if (completed && action == CleanupAction.REMOVE) {
+            renderAccounts()
+            showSelected()
+            pageStatus.text = "已移除账号 $account。"
+        } else if (completed) {
+            if (sessions.activeAccount == account && canOpen(account)) showSelected()
+            pageStatus.text = "已清除账号 $account 的本机登录。"
+        } else {
+            pageStatus.text = "账号 $account 的清理未完成，配置已保留。请在账号设置重试。"
+        }
     }
 
     private fun initializeProfiles(): Boolean {
@@ -182,8 +266,8 @@ class MainActivity : Activity() {
         return try {
             sessions = SessionStore(this)
             val store = ProfileStore.getInstance()
-            listOf("A", "B").forEach { store.getOrCreateProfile(profileName(it)) }
-            pageStatus.text = "A/B 持久资料已准备；尚未应用代理，未创建或导航 WebView。"
+            sessions.accountOrder.forEach { store.getOrCreateProfile(profileName(it)) }
+            pageStatus.text = "账号资料已准备；尚未应用代理。"
             true
         } catch (_: Exception) {
             pageStatus.text = "资料初始化失败；保留原始资料，关闭页面入口。"
@@ -203,7 +287,7 @@ class MainActivity : Activity() {
         active = false
         handler.removeCallbacks(tick)
         if (profilesReady) {
-            sessions.accountOrder.filterNot(sessions.loginCleanup.isPending).forEach {
+            sessions.accountOrder.filterNot(sessions.loginCleanup::isPending).forEach {
                 ProfileStore.getInstance().getProfile(profileName(it))?.cookieManager?.flush()
             }
             persist()
@@ -213,6 +297,7 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         destroyed = true
         handler.removeCallbacksAndMessages(null)
+        sessionObserver?.let(sessions::stopObserving)
         try { connectivity?.unregisterNetworkCallback(networkCallback) } catch (_: RuntimeException) { }
         closedTabs.clear()
         views.values.forEach(::destroyView)
@@ -367,7 +452,7 @@ class MainActivity : Activity() {
                             emptyMap(), ByteArrayInputStream("Synthetic prototype: external content blocked".toByteArray()))
                     }
                     override fun onPageFinished(view: WebView, url: String) {
-                        if (views[account to tab.id] !== view) return
+                        if (views[account to tab.id] !== view || !canOpen(account)) return
                         if (SessionStore.isSyntheticUrl(url)) { tab.url = url; persist() }
                         if (profilesReady && sessions.activeAccount == account && sessions.selected[account] == tab.id) {
                             pageStatus.text = "账户 $account · ${if (tab.popup) "合成弹窗" else "合成标签"} · $url"
@@ -385,7 +470,7 @@ class MainActivity : Activity() {
                         return true
                     }
                     override fun onCloseWindow(window: WebView) {
-                        val list = sessions.tabs.getValue(account)
+                        val list = sessions.tabs[account] ?: return
                         val index = list.indexOfFirst { it.popup && views[account to it.id] === window }
                         if (list.size <= 1 || index == -1) return
                         val closed = list.removeAt(index)
@@ -476,5 +561,12 @@ class MainActivity : Activity() {
     private fun row(parent: LinearLayout) = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; parent.addView(this) }
     private fun button(parent: LinearLayout, label: String, action: () -> Unit) = Button(this).also {
         it.text = label; it.setOnClickListener { action() }; parent.addView(it)
+    }
+
+    private companion object {
+        val removalColors = android.content.res.ColorStateList(
+            arrayOf(intArrayOf(-android.R.attr.state_enabled), intArrayOf()),
+            intArrayOf(Color.GRAY, Color.rgb(161, 38, 50))
+        )
     }
 }

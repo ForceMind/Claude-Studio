@@ -43,12 +43,19 @@ check('WebViews and popup callbacks are scoped by account and tab', () => {
 });
 check('cleanup is profile-scoped and blocks navigation until the completion callback', () => {
   assert.match(main, /isFeatureSupported\(WebViewFeature.DELETE_BROWSING_DATA\)/);
-  assert.match(main, /gate.ready && !sessions.loginCleanup.isPending\(account\)/);
+  assert.match(main, /sessions.hasCurrentAccount\(account\) && !sessions.loginCleanup.isPending\(account\)/);
   assert.match(main, /views.keys.filter \{ it.first == account \}/);
   assert.match(main, /closedTabs.clear\(account\)/);
   assert.match(main, /WebStorageCompat.deleteBrowsingData\(profile.webStorage\)/);
   assert.match(main, /cleanup.finish\(account, token\)/);
   assert.doesNotMatch(main, /WebStorage.getInstance|clearCache\(|\.pauseTimers\(/);
+});
+check('account removal confirms its target and commits roster and pending intent together', () => {
+  const store = read('app/src/main/java/dev/claudestudio/browser/SessionStore.kt');
+  assert.match(main, /\.setNegativeButton\("取消", null\)[\s\S]+\.setPositiveButton[\s\S]+startCleanup\(account, action\)/);
+  assert.match(main, /remove.isEnabled = !running && sessions.mayRemove\(selected\)/);
+  assert.match(main, /sessions.accountOrder.forEach \{ store.getOrCreateProfile\(profileName\(it\)\) \}/);
+  assert.match(store, /putString\(LAYOUT, retained.encode\(\)\).remove\(REMOVE\).commit\(\)/);
 });
 check('proxy has no direct or bypass fallback', () => {
   assert.match(gate, /addProxyRule\("http:\/\/\$host:\$port"\)/);
@@ -58,7 +65,7 @@ check('proxy has no direct or bypass fallback', () => {
 });
 check('persistent layout and profile cookie flush are explicit', () => {
   const store = read('app/src/main/java/dev/claudestudio/browser/SessionStore.kt');
-  assert.match(store, /getInt\("schema"\) == 1/);
+  assert.match(store, /when \(schema\) \{[\s\S]+1 ->[\s\S]+2 -> requireNotNull/);
   assert.match(store, /getSharedPreferences\("sessions-v1"/);
   assert.match(store, /\.commit\(\)/);
   assert.match(main, /getProfile\(profileName\(it\)\)\?\.cookieManager\?\.flush\(\)/);

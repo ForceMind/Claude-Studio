@@ -52,19 +52,18 @@ class TabBehaviorTest {
     }
 
     @Test fun pendingCleanupSurvivesRecreationAndAnOldCallbackCannotUnlockIt() {
-        val pending = mutableSetOf<String>()
-        val inFlight = mutableMapOf<String, Any>()
-        fun attempts(active: MutableMap<String, Any>) = LoginCleanup(pending::contains, { account, busy ->
-            if (busy) pending.add(account) else pending.remove(account)
-        }, active)
+        val pending = mutableMapOf<String, CleanupAction>()
+        val inFlight = mutableMapOf<String, LoginCleanup.Attempt>()
+        fun attempts(active: MutableMap<String, LoginCleanup.Attempt>) = LoginCleanup(pending::get,
+            { account, action -> pending[account] = action }, { account, _ -> pending.remove(account) }, active)
         val first = attempts(inFlight)
-        val old = checkNotNull(first.begin("A"))
+        val old = checkNotNull(first.begin("A", CleanupAction.CLEAR))
         assertTrue(first.isPending("A"))
         assertFalse(first.isPending("B"))
-        assertNull(attempts(inFlight).begin("A"))
+        assertNull(attempts(inFlight).begin("A", CleanupAction.CLEAR))
         first.fail("A", old)
         val reopened = attempts(inFlight)
-        val retry = checkNotNull(reopened.begin("A"))
+        val retry = checkNotNull(reopened.begin("A", CleanupAction.CLEAR))
         assertFalse(first.finish("A", old))
         assertTrue(reopened.isPending("A"))
         assertTrue(reopened.finish("A", retry))
