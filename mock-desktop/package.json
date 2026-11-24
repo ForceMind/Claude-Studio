@@ -1,0 +1,18 @@
+{
+  "name": "profile-window-simulator",
+  "version": "0.4.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "node run.cjs",
+    "verify": "node run.cjs --verify",
+    "verify:drop": "node run.cjs --verify-drop",
+    "verify:recover": "node run.cjs --verify-recover",
+    "spaces": "node spaces-run.cjs",
+    "verify:spaces": "node spaces-run.cjs --verify",
+    "verify:workflows": "node spaces-run.cjs --verify-workflows"
+  },
+  "devDependencies": {
+    "electron": "45.4.1"
+  }
+}

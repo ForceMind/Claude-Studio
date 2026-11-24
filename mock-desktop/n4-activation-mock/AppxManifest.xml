@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+         xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap5 uap10 rescap">
+  <Identity Name="Studio.N4.ActivationMock" Publisher="CN=Studio N4 Simulation" Version="1.0.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Studio activation simulator</DisplayName>
+    <PublisherDisplayName>Studio test fixture</PublisherDisplayName>
+    <Logo>assets\Store.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources><Resource Language="en-us" /></Resources>
+  <Applications>
+    <Application Id="Window" Executable="app\StudioActivationWindow.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Studio activation simulator" Description="Local test window" BackgroundColor="transparent"
+                          Square150x150Logo="assets\Square150.png" Square44x44Logo="assets\Square44.png" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias><uap5:ExecutionAlias Alias="studio-n4-window.exe" /></uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+    <Application Id="HelperOne" Executable="app\StudioActivationHelperOne.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Studio simulation helper one" Description="Local test helper" BackgroundColor="transparent"
+                          Square150x150Logo="assets\Square150.png" Square44x44Logo="assets\Square44.png" AppListEntry="none" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias><uap5:ExecutionAlias Alias="studio-n4-helper-one.exe" /></uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+    <Application Id="HelperTwo" Executable="app\StudioActivationHelperTwo.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Studio simulation helper two" Description="Local test helper" BackgroundColor="transparent"
+                          Square150x150Logo="assets\Square150.png" Square44x44Logo="assets\Square44.png" AppListEntry="none" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias" EntryPoint="Windows.FullTrustApplication">
+          <uap5:AppExecutionAlias><uap5:ExecutionAlias Alias="studio-n4-helper-two.exe" /></uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+    <Application Id="MediumHelper" Executable="app\StudioActivationMediumHelper.exe" uap10:RuntimeBehavior="win32App" uap10:TrustLevel="mediumIL">
+      <uap:VisualElements DisplayName="Studio simulation medium helper" Description="Local test helper" BackgroundColor="transparent"
+                          Square150x150Logo="assets\Square150.png" Square44x44Logo="assets\Square44.png" AppListEntry="none" />
+      <Extensions>
+        <uap5:Extension Category="windows.appExecutionAlias" uap10:RuntimeBehavior="win32App" uap10:TrustLevel="mediumIL">
+          <uap5:AppExecutionAlias><uap5:ExecutionAlias Alias="studio-n4-medium-helper.exe" /></uap5:AppExecutionAlias>
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>
+</Package>

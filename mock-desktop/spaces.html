@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
+<title>Claude Studio 模拟启动器</title>
+<style>
+  body { margin: 22px; font: 14px/1.5 system-ui; color: #192431; background: #f5f7fa; }
+  h1 { margin: 0 0 16px; font-size: 22px; }
+  section { padding: 14px; margin-bottom: 12px; border: 1px solid #dbe2ea; border-radius: 8px; background: white; }
+  section > div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; }
+  h2 { margin: 0; font-size: 16px; }
+  output { color: #465467; }
+  button, select { font: inherit; padding: 3px 8px; }
+  #feedback { margin: 0; min-height: 1.5em; }
+</style>
+<h1>Claude Studio 模拟启动器</h1>
+<template id="space">
+  <section>
+    <h2></h2>
+    <div>
+      <button data-action="open">打开或聚焦</button>
+      <button data-action="mailbox">打开模拟邮箱</button>
+      <button data-action="stop">停止</button>
+      <output></output>
+    </div>
+    <div>
+      <label>语言
+        <select name="language">
+          <option value="">跟随系统</option><option value="zh-CN">简体中文</option><option value="en-US">English</option>
+        </select>
+      </label>
+      <label>时区
+        <select name="zone">
+          <option value="">跟随系统</option><option value="Asia/Shanghai">上海</option><option value="America/Los_Angeles">洛杉矶</option>
+        </select>
+      </label>
+      <button data-action="save">保存</button>
+    </div>
+    <div>
+      <label>测试仓库
+        <select name="operation">
+          <option value="ro">授权只读</option><option value="rw">授权读写</option>
+          <option value="read">读取 note.txt</option><option value="write">写入空间标记</option>
+        </select>
+      </label>
+      <button data-action="project">执行</button>
+    </div>
+  </section>
+</template>
+<main></main>
+<p id="feedback" role="status"></p>
+<script src="space-controls.js"></script>
+</html>

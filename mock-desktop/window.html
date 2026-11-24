@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'">
+<title>环境模拟</title>
+<style>
+  body {font: 15px/1.45 system-ui; margin: 24px; color: #192431; background: #f5f7fa}
+  h1 {font-size: 22px; margin: 0 0 16px} dt {color: #465467; font-size: 13px}
+  dd {margin: 2px 0 12px; font-variant-numeric: tabular-nums}
+</style>
+<h1 id="title"></h1>
+<dl>
+  <dt>窗口默认时区</dt><dd id="native"></dd>
+  <dt>账户设置的时区</dt><dd id="selected"></dd>
+  <dt>同一时刻在账户时区的当地时间</dt><dd id="sample"></dd>
+  <dt>模拟请求使用的代理配置及响应</dt><dd id="proxy">等待响应</dd>
+</dl>
+<div id="space-data" hidden>
+  <label for="space-note">模拟资料</label>
+  <input id="space-note" maxlength="200" autocomplete="off">
+  <p id="space-language"></p>
+  <button id="login">发起模拟登录</button>
+  <button id="mailbox">打开模拟邮箱</button>
+  <output id="login-state"></output>
+</div>
+<script src="renderer.js"></script>
+</html>

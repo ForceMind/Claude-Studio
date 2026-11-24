@@ -1,0 +1,105 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { git, baseline } = require('./mock-project.cjs');
+const { validateCallback } = require('./mock-callback.cjs');
+
+async function verifyWorkflows({start, root, report}) {
+  const launcher = await start();
+  const click = (id, action) => launcher.request('click', {button: id + '-' + action});
+  const mail = (id, mailAction, message) => launcher.request('window', {id, command: 'mail', mailAction, message});
+  const project = async (id, operation, candidate) => {
+    if (candidate) return launcher.request('project', {id, operation, candidate});
+    const result = await launcher.request('click', {button: id + '-project', preferences: {operation}});
+    return result.value;
+  };
+  const states = async () => ({A: await mail('A', 'state'), B: await mail('B', 'state')});
+  const waiting = '等待邮箱确认';
+  const a = 'a@example.invalid', b = 'b@example.invalid';
+  await click('A', 'open');
+  await click('B', 'open');
+  assert.deepEqual(await states(), {A: '未登录', B: '未登录'});
+  await mail('A', 'login');
+  await mail('B', 'login');
+  const auth = report.login = {bothPending: await states()};
+  assert.deepEqual(auth.bothPending, {A: waiting, B: waiting});
+  const inboxA = await mail('A', 'mailbox');
+  const inboxB = (await click('B', 'mailbox')).value;
+  const messageA = await mail('A', 'inbox');
+  const messageB = await mail('B', 'inbox');
+  assert.equal(inboxA.recipient, a);
+  assert.equal(inboxB.recipient, b);
+  assert.equal(messageA.recipient, a);
+  assert.equal(messageB.recipient, b);
+  assert.ok(messageA.ticket && messageB.ticket && messageA.ticket !== messageB.ticket);
+  auth.recipients = [messageA.recipient, messageB.recipient];
+  await assert.rejects(mail('A', 'deliver', messageB), /INVALID_CALLBACK/);
+  await assert.rejects(mail('B', 'deliver', {...messageA, recipient:b}), /INVALID_CALLBACK/);
+  assert.deepEqual(await states(), auth.bothPending);
+  auth.crossDeliveryDenied = true;
+
+  await mail('B', 'complete');
+  auth.afterB = await states();
+  assert.deepEqual(auth.afterB, {A: waiting, B: b});
+  await assert.rejects(mail('B', 'deliver', messageB), /INVALID_CALLBACK/);
+  await mail('A', 'complete');
+  auth.afterA = await states();
+  assert.deepEqual(auth.afterA, {A: a, B: b});
+  await assert.rejects(mail('A', 'deliver', messageA), /INVALID_CALLBACK/);
+  auth.replayDenied = true;
+  assert.doesNotThrow(() => validateCallback(messageA, messageA, a, messageA.expires - 1));
+  assert.throws(() => validateCallback(messageA, messageA, a, messageA.expires), /EXPIRED_CALLBACK/);
+  auth.expiryBoundaryChecked = true;
+  await mail('A', 'login');
+  await mail('A', 'mailbox');
+  const old = await mail('A', 'inbox');
+  await click('A', 'stop');
+  await assert.rejects(mail('A', 'deliver', old), /SPACE_STOPPED/);
+  await click('A', 'open');
+  await mail('A', 'mailbox');
+  await assert.rejects(mail('A', 'deliver', old), /INVALID_CALLBACK/);
+  assert.deepEqual(await states(), auth.afterA);
+  auth.closedAndReopenedCallbackDenied = true;
+  console.log('模拟邮箱与回调通过：B 先完成，A 后完成');
+
+  const repo = path.join(root, 'projects', 'shared');
+  const file = path.join(repo, 'note.txt');
+  const diff = () => git(repo, ['diff', '--no-ext-diff', '--', 'note.txt']);
+  const files = report.project = {};
+  await project('A', 'rw');
+  assert.equal(await fs.readFile(file, 'utf8'), baseline);
+  assert.equal(await diff(), '');
+  await assert.rejects(project('B', 'read'), /UNAUTHORIZED_PROJECT/);
+  await assert.rejects(project('B', 'write'), /UNAUTHORIZED_PROJECT/);
+  files.ungrantedAccessDenied = true;
+  await project('A', 'write');
+  const written = 'edited by simulated Code A\n';
+  assert.equal(await fs.readFile(file, 'utf8'), written);
+  files.hostDiff = await diff();
+  assert.match(files.hostDiff, /-simulated project baseline\n\+edited by simulated Code A/);
+  await project('B', 'ro');
+  assert.equal((await project('B', 'read')).text, written);
+  await assert.rejects(project('B', 'write'), /READ_ONLY/);
+  assert.equal(await diff(), files.hostDiff);
+  files.readOnlyReadSucceededAndWriteDenied = true;
+  await assert.rejects(project('B', 'rw'), /WRITE_CONFLICT/);
+  const alias = path.join(root, 'shared-alias');
+  await fs.symlink(repo, alias, 'junction');
+  try {
+    await assert.rejects(project('B', 'rw', alias), /WRITE_CONFLICT/);
+    await assert.rejects(project('B', 'write'), /READ_ONLY/);
+    assert.equal(await diff(), files.hostDiff);
+    files.directAndAliasWriteConflictsDenied = true;
+    await click('A', 'stop');
+    assert.equal(await fs.readFile(file, 'utf8'), written);
+    assert.equal(await diff(), files.hostDiff);
+    files.retainedAfterWriterStopped = true;
+    await project('B', 'rw', alias);
+    await project('B', 'write');
+    assert.equal(await fs.readFile(file, 'utf8'), 'edited by simulated Code B\n');
+    files.writeAfterRelease = true;
+  } finally { await fs.unlink(alias); }
+  console.log('原工作树写回、只读拒写、目录别名写冲突和释放通过');
+}
+
+module.exports = {verifyWorkflows};
