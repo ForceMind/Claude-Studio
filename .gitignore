@@ -1,2 +1,11 @@
 /.prototype/
 /mock-desktop/node_modules/
+/.browser-local/
+/node_modules/
+/.npm-cache/
+/dist-app/
+/release/
+/.electron-cache/
+/.electron-builder-cache/
+/.build-temp/
+/ClaudeBrowser.exe
