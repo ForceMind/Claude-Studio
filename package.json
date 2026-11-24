@@ -1,7 +1,7 @@
 {
   "name": "claude-studio-browser",
   "productName": "Claude Browser",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Windows browser shell for Claude account spaces",
   "private": true,
   "type": "module",
@@ -72,7 +72,7 @@
       "oneClick": false,
       "perMachine": false,
       "allowElevation": false,
-      "allowToChangeInstallationDirectory": false,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "deleteAppDataOnUninstall": false,

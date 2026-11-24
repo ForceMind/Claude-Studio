@@ -2,12 +2,12 @@
 
 [官网](https://claude-studio-1pm.pages.dev/) · [GitHub Pages 镜像](https://forcemind.github.io/Claude-Studio/) · [下载 Windows x64 便携版 v0.3.1](https://github.com/ForceMind/Claude-Studio/releases/download/v0.3.1/ClaudeBrowser.exe)
 
-GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.7.0**，包含 Windows 安装版和安装版自动更新，已完成本机自签升级测试。正式签名的安装版与线上更新清单尚待发布。验收结果和接手位置见 [路线图](ROADMAP.md#windows-070-接手)。
+GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.7.1**，增加 Windows 安装目录选择。0.7.0 已完成安装版自动更新的本机自签测试。正式签名的安装版与线上更新清单尚待发布。验收结果和接手位置见 [路线图](ROADMAP.md#windows-070-接手)。
 
 ## 选择 Windows 版本
 
 - 便携版 ClaudeBrowser.exe 可以直接双击。它会把程序临时解包后运行，资料保存在 EXE 同级的 .browser-local。
-- 安装版 ClaudeBrowser-Setup.exe 默认安装到当前 Windows 用户的程序目录，当前安装向导固定该位置，并添加桌面与开始菜单快捷方式。首次打开可使用新资料，或直接读写现有便携版的同一份资料。选择便携版所在目录或其中的 `.browser-local` 都可以。安装和卸载默认保留账号资料。两个入口共享资料时，请先退出正在运行的入口。若在共享资料中移除了初始账号，请通过 0.6.0 或更新版本打开该目录。
+- 安装版 ClaudeBrowser-Setup.exe 默认安装到当前 Windows 用户的程序目录。0.7.1 起可在安装向导中更改程序目录，并添加桌面与开始菜单快捷方式。有便携版的目录请为安装版预留独立子目录。首次打开可使用新资料，或直接读写现有便携版的同一份资料。选择便携版所在目录或其中的 `.browser-local` 都可以。安装和卸载默认保留账号资料。两个入口共享资料时，请先退出正在运行的入口。若在共享资料中移除了初始账号，请通过 0.6.0 或更新版本打开该目录。
 
 便携版可直接双击下载的 **ClaudeBrowser.exe**，也可按下方步骤从源码生成工作树根目录的副本。应用带有 Electron / Chromium，打开后从账户 A 开始。顶部标签栏管理当前账户的网页，地址栏右侧可以打开 Claude、邮箱，以及切换当前账户。
 

@@ -8,6 +8,10 @@
 - Windows 正式发布从签名身份和生产清单接手。先完成 Authenticode 签名并核对 EXE、应用程序和更新助手，再发布固定版本 Setup 和 Ed25519 清单。公网更新及真实站点登录仍待验证。
 - 本阶段同步源码、脱敏文档及 `docs/` 官网。类型检查与非浏览器回归已复跑，官网的下载说明、相对资源及双账户演示通过静态检查。部署源为该分支的 `docs/`，生产入口为 [Cloudflare Pages](https://claude-studio-1pm.pages.dev/) 和 [GitHub Pages](https://forcemind.github.io/Claude-Studio/)。
 
+### Windows 0.7.1 安装目录
+
+0.7.1 启用 NSIS 安装目录选择，自动更新仍使用已登记的安装位置。类型检查和 Windows x64 解包通过。实机确认普通向导显示可编辑的安装路径，卸载现有 0.7.0 后用新版向导安装到 D 盘独立程序目录。新版程序文件与构建一致，Windows 安装登记、桌面与开始菜单快捷方式指向同一位置，原便携程序哈希和两份资料目录保持。新版 Setup 已交付本机固定目录，旧包已备份。此次验证覆盖安装向导与系统登记，未运行应用浏览器。
+
 ## 浏览器原型分支
 
 本节适用于 `claude-browser`。本机使用固定更新目录的 `ClaudeBrowser.exe`，工作树根目录也保留构建副本。启动和构建步骤见 [README](README.md)。原桌面客户端的 S1–S8 历史交接在下文。
