@@ -1,8 +1,8 @@
 # Claude Browser · Windows
 
-[官网](https://claude-studio-1pm.pages.dev/) · [GitHub Pages 镜像](https://forcemind.github.io/Claude-Studio/) · [下载 Windows x64 便携版 v0.3.1](https://github.com/ForceMind/Claude-Studio/releases/download/v0.3.1/ClaudeBrowser.exe)
+[官网](https://claude-studio-1pm.pages.dev/) · [GitHub Pages 镜像](https://forcemind.github.io/Claude-Studio/) · [下载 Windows x64 安装版 v0.8.1](https://github.com/ForceMind/Claude-Studio/releases/download/v0.8.1/ClaudeBrowser-Setup.exe) · [下载 Windows x64 便携版 v0.8.1](https://github.com/ForceMind/Claude-Studio/releases/download/v0.8.1/ClaudeBrowser.exe)
 
-GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.8.1**，保留 Windows 邮箱空间，并修复同页 Claude 登录链接覆盖原邮件的问题。0.7.1 起可在安装向导选择程序目录。0.7.0 已完成安装版自动更新的本机自签测试。正式签名的安装版与线上更新清单尚待发布。验收结果和接手位置见 [路线图](ROADMAP.md#windows-070-接手)。
+**0.8.1** 提供 Windows x64 安装版和便携版，支持共享邮箱空间，并修复同页 Claude 登录链接覆盖原邮件的问题。两个附件均为未签名的手动下载包。[版本说明和 SHA-256](https://github.com/ForceMind/Claude-Studio/releases/tag/v0.8.1) · [安装验收](ROADMAP.md#windows-081-安装验收)
 
 ## 选择 Windows 版本
 
@@ -43,7 +43,7 @@ GitHub 当前提供 **0.3.1 便携版**。此分支的开发基线为 **0.8.1**�
 
 安装版更新先保存账号资料并退出程序，再调用当前用户的 NSIS 安装流程。安装完成后校验本机程序的版本及签名，通过后重新打开。从未配置更新源的旧版本过渡时，需要先手动安装首个带正式更新策略的版本。已实测签名测试版从 0.6.99 通过回环更新源升到 0.7.0，自动重启并保留合成 A、B 的配置、标签及各自的登录。真实站点会话仍待验证。
 
-GitHub 发布时，安装包使用版本标签 `windows-setup-v<version>` 下的 `ClaudeBrowser-Setup.exe`，清单里的下载地址必须指向该版本资产。安装版的生产策略可固定 `https://raw.githubusercontent.com/ForceMind/Claude-Studio/windows-updates/win32-x64-setup.json` 为清单地址，并将 `https://github.com/ForceMind/Claude-Studio/releases/download/` 设为资产路径前缀。先上传并核对已签名的安装包，再更新 Ed25519 签名清单。应用只允许受策略认可的 GitHub Setup 资产经专用代理跳转一次到 GitHub Release CDN，下载后仍验证清单中的大小、SHA-256 和 Windows 发布者签名。
+正式自动更新的安装包使用版本标签 `windows-setup-v<version>` 下的 `ClaudeBrowser-Setup.exe`，清单里的下载地址必须指向该版本资产。安装版的生产策略可固定 `https://raw.githubusercontent.com/ForceMind/Claude-Studio/windows-updates/win32-x64-setup.json` 为清单地址，并将 `https://github.com/ForceMind/Claude-Studio/releases/download/` 设为资产路径前缀。先上传并核对已签名的安装包，再更新 Ed25519 签名清单。应用只允许受策略认可的 GitHub Setup 资产经专用代理跳转一次到 GitHub Release CDN，下载后仍验证清单中的大小、SHA-256 和 Windows 发布者签名。
 
 ## 构建与验证
 

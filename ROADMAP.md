@@ -2,7 +2,7 @@
 
 ## Windows 0.7.0 接手
 
-- 目标工作分支为 `claude-browser`。Windows x64 可以从源码生成便携版与 NSIS 安装版，命令和产物路径见 [README](README.md)。公开下载仍为 [0.3.1 便携版](https://github.com/ForceMind/Claude-Studio/releases/tag/v0.3.1)。
+- 目标工作分支为 `claude-browser`。Windows x64 可以从源码生成便携版与 NSIS 安装版，命令和产物路径见 [README](README.md)。公开手动下载见 [0.8.1 安装版与便携版](https://github.com/ForceMind/Claude-Studio/releases/tag/v0.8.1)。
 - 当前开发基线支持账号排序、清理和移除、会话与标签恢复，以及两种 Windows 版型的独立更新策略。类型检查、87 项非浏览器测试、安装包解包及本地自签升级验收通过，另有 1 项按平台跳过。
 - 本机自签实测从测试版 0.6.99 通过回环 HTTPS 源升至 0.7.0，NSIS 安装回执成功，新版自动打开，两个合成账号的配置、标签及独立登录保留。测试安装与证书信任已撤销。
 - Windows 正式发布从签名身份和生产清单接手。先完成 Authenticode 签名并核对 EXE、应用程序和更新助手，再发布固定版本 Setup 和 Ed25519 清单。公网更新及真实站点登录仍待验证。
@@ -39,7 +39,7 @@
 
 - Windows x64 NSIS 安装包用当次构建的中间包静态提取卸载组件，并通过完整解包检查。安装包位于 release/windows/checks/0.8.1/installer/ClaudeBrowser-Setup.exe，SHA-256 为 f36512113b2e43acd1ce8261326ad3850f42632365b5ecdf652d11ae7e049441。
 - 经用户授权，按注册的当前用户程序目录从 0.7.1 原位升至 0.8.1。安装进程正常退出，安装后主程序及 ASAR 与解包结果一致。卸载登记、桌面和开始菜单快捷方式指向同一个安装目录。
-- 安装版原先没有资料选择记录，已有账号和标签位于便携资料目录。备份旧安装、旧 Setup 及现有资料后，为安装版登记沿用该资料。逐个核对升级前后的资料文件、Chromium 会话存储及便携 EXE 哈希。用 0.8.1 的资料读取逻辑复核账号、活动标签和保存状态与备份一致。真实站点登录未打开验证；本机无签名安装包未发布。
+- 安装版原先没有资料选择记录，已有账号和标签位于便携资料目录。备份旧安装、旧 Setup 及现有资料后，为安装版登记沿用该资料。逐个核对升级前后的资料文件、Chromium 会话存储及便携 EXE 哈希。用 0.8.1 的资料读取逻辑复核账号、活动标签和保存状态与备份一致。真实站点登录未打开验证。0.8.1 的两种无签名 EXE 作为手动下载附件发布到 [GitHub Releases](https://github.com/ForceMind/Claude-Studio/releases/tag/v0.8.1)。
 
 ## 浏览器原型分支
 
