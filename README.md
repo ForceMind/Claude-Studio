@@ -7,20 +7,24 @@
 - [完整路线图与逐步验收](ROADMAP.md)
 - [项目记忆与接手约定](AGENTS.md)
 
-## A/MXC 沙盒交接
+## 最新进展与交接入口（2026-11-27）
 
-[当前验收状态与下一步](ROADMAP.md#a-模拟器启动前封网方案)记录了 A 的启动权限预检。宿主能够以标准 A 的令牌挂起创建合成进程，但普通 A 仍然可以取得其主线程的恢复权限。下一次实机验证需要先获准，范围为新建 A 令牌副本的默认 DACL，合成进程全程保持挂起。
+已完成 **Phase 0–Phase 7** 全部底层隔离引擎、原生 WPF 控制面、高保真模拟客户端套件（`ClaudeDesktopTwin` + `ClaudeCliTwin`），以及 **真实官方 Claude Desktop (`v6.6395.0.0`) 双空间同桌面并行隔离与代理路由实机验收**（全程零真实账号、零改动宿主 `WindowsApps`/`C:\`/桌面 ACL/`10810`/系统 DNS，并全部 100% 回滚）：
 
-[容器复测](ROADMAP.md#a-的-mxc-容器绑定复测)记录了按用户 SID 和映像路径拒绝 IPv4 绑定的负结果。[N3 实测](ROADMAP.md#n3-实测结果与清理)记录了按容器 SID 限制连接的正结果。N3 覆盖合成 HTTP、HTTPS、代理故障和两项 DNS 调用。启动前封网和 B 的同等覆盖仍需验证。
+- **双标准用户 + PSEC 1.1 启动前零竞态封网**：三层架构（Layer-1 PSEC 1.1 创建器含内核态 `fs_enumerate` → Layer-2 纯 `KERNEL32.dll` 硬化守卫 → Layer-3 客户端多进程树），在 `ResumeThread` 前单事务安装并独立读回 4 条静态 `ALE_PACKAGE_ID` BLOCK WFP 规则；普通同账户/跨账户 6 视角句柄审计 `0` 违例。
+- **单端口代理与故障秒级断流**：A/B 各自仅放通独立回环端口 `127.0.0.1:Pa/Pb`（跨端口 `WSAEACCES 10013`），单空间断流与共享上游故障均在 `51ms–1392ms` 内完成断流且旧流不重放；主进程与派生子进程全协议（直连 TCP/UDP、`127.0.0.2`、QUIC、DoT、DoH、系统 DNS ETW）零旁路零泄露；宿主持续在线。
+- **真实官方 Claude Desktop 同桌面双空间实机验证**：两份真实官方 `claude.exe`（A `zh-CN / Asia/Shanghai`、B `en-US / America/Los_Angeles`）在 `WinSta0\Default` 同时并存两个可见 `Chrome_WidgetWin_1:Claude` 窗口（零单实例互斥冲突），共 12 个真实 Chromium/Electron 进程 100% 落入各自 AppContainer，冷启动代理命中 `0`、开例外后各自经专属口发起 `CONNECT claude.ai:443`、仅断 A 时 B 不受影响、全量 DNS ETW 代发为 `0`、`CoworkVMService` 未触发。
 
 | 入口 | 用途 |
 | --- | --- |
+| [完整路线图与逐步验收](ROADMAP.md) | Phase 0–7 及真实官方 Claude Desktop 双空间实测脱敏记录与报告哈希 |
 | [项目记忆](AGENTS.md) | 已批准边界、回滚要求和原始证据位置 |
-| [模拟器源码](mock-desktop/) | Electron 双窗口、合成邮箱、测试仓库及 Windows 探针 |
-| [N4 启动权限实验源码](mock-desktop/fixtures/startup-permissions/) | 使用现有宿主权限挂起创建 A、比较窗口站与桌面权限、核对句柄及退出 |
-| [A 的 MXC 绑定实验源码](mock-desktop/fixtures/mxc-bind/) | 合成 TCP/UDP 调用和独立的 WFP 条件读回 |
+| [原生 WPF 控制面](studio-control-plane/) | 纯 `.NET 4.x` 原生 x64 控制面、系统托盘、`LivePsecWfpBackend`、单写者租约、`HANDOFF.md` 与 `ClientAdapter` |
+| [高保真模拟客户端套件](studio-twin-clients/) | 模仿官方接口的 `ClaudeDesktopTwin`、`ClaudeCliTwin`、本地 TLS 1.2 OAuth/SSE 模拟 API 与 Phase 7 双空间端到端验收 |
+| [启动权限与 PSEC 实测夹具](mock-desktop/fixtures/startup-permissions/) | Phase 0–4、Phase 6B 合成 MSIX、及真实官方 Claude Desktop 单/双空间 PSEC 1.1 实测脚本 |
+| [早期模拟器源码](mock-desktop/) | 早期 Electron 双窗口、合成邮箱、测试仓库及 Windows WFP/DNS 探针 |
 
-本分支包含可审查的模拟器及实验夹具源码。路线图中 .prototype 下的路径以原实机工作区为根。原始日志、实验凭据、代理配置、SDK 暂存内容和具体运行清单都保留在该机器。复核源码可以用独立检出。复现实机需要符合路线图的夹具、专用标准账户及用户确认。
+本分支包含可审查的控制面、模拟客户端及实测夹具源码。路线图中 `.prototype` 下的原始报告以原实机工作区为根，机器标识、用户资料、凭据、代理私有配置与原始 ETW 均留在本机不入库。
 
 ## 合成模拟器
 
