@@ -52,6 +52,10 @@ namespace ClaudeStudio.ControlPlane {
         public StudioEngine(ISpaceRuntimeBackend backend = null) {
             liveBackend = backend;
             if (liveBackend != null) modeLabel = liveBackend.BackendModeLabel;
+            var realBk = liveBackend as RealDesktopPsecBackend;
+            if (realBk != null) {
+                realBk.AutomaticFaultCutoff += OnBackendAutomaticFaultCutoff;
+            }
             configs[SpaceId.A] = new SpaceProfileConfig {
                 Id = SpaceId.A,
                 DisplayName = "Space A",
@@ -162,6 +166,29 @@ namespace ClaudeStudio.ControlPlane {
             if (handler != null) handler();
         }
 
+        void OnBackendAutomaticFaultCutoff(SpaceId id, string reason) {
+            lock (gate) {
+                var st = states[id];
+                if (st.State != SpaceNetworkState.Stopped) {
+                    st.DynamicExceptionOpen = false;
+                    st.ProxyOwnerPid = 0;
+                    st.State = SpaceNetworkState.FaultCutoff;
+                    st.LastTransitionUtc = DateTime.UtcNow.ToString("o");
+                    st.LastNote = "Auto-cutoff (" + reason + "): dynamic E revoked & embedded entry halted; 4 Static BLOCK intact";
+                }
+                if (string.Equals(reason, "upstream-unhealthy", StringComparison.OrdinalIgnoreCase)) {
+                    upstreamHealthy = false;
+                }
+            }
+            AddAudit("AUTO_CUTOFF", id.ToString(), "Watchdog auto-cutoff triggered: " + reason);
+            Notify();
+        }
+
+        public ProxySpaceStats GetEmbeddedProxyStats(SpaceId id) {
+            var realBk = liveBackend as RealDesktopPsecBackend;
+            return realBk != null ? realBk.Relay.GetStats(id) : null;
+        }
+
         public bool ConfigureUpstream(string host, int port, bool allowReserved10810, out string error) {
             error = null;
             if (string.IsNullOrWhiteSpace(host)) { error = "Upstream host cannot be empty."; return false; }
@@ -174,6 +201,10 @@ namespace ClaudeStudio.ControlPlane {
             lock (gate) {
                 upstreamHost = host.Trim();
                 upstreamPort = port;
+            }
+            var realBk = liveBackend as RealDesktopPsecBackend;
+            if (realBk != null) {
+                realBk.Relay.ConfigureUpstream(upstreamHost, upstreamPort, realBk.Relay.ZeroEgressTestMode);
             }
             AddAudit("UPSTREAM", "GLOBAL", string.Format("Configured upstream endpoint {0}:{1}", upstreamHost, upstreamPort));
             ProbeUpstreamHealth();

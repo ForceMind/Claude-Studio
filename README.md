@@ -9,11 +9,11 @@
 
 ## 最新进展与交接入口（2026-11-27）
 
-已完成 **Phase 0–Phase 7** 全部底层隔离引擎、原生 WPF 控制面、高保真模拟客户端套件（`ClaudeDesktopTwin` + `ClaudeCliTwin`），以及 **真实官方 Claude Desktop (`v6.6395.0.0`) 双空间同桌面并行隔离与代理路由实机验收**（全程零真实账号、零改动宿主 `WindowsApps`/`C:\`/桌面 ACL/`10810`/系统 DNS，并全部 100% 回滚）：
+已完成 **Phase 0–Phase 8** 全部底层隔离引擎、纯 C# 内嵌双代理与自动断流看门狗、原生 WPF 控制面（含预编译原生辅助二进制）、高保真模拟客户端套件（`ClaudeDesktopTwin` + `ClaudeCliTwin`），以及 **控制面直驱两份真实官方 Claude Desktop (`v6.6395.0.0`) 双空间同桌面并行隔离与故障自动断流实机验收**（全程零真实账号、零改动宿主 `WindowsApps`/`C:\`/桌面 ACL/`10810`/系统 DNS，并全部 100% 回滚）：
 
 - **双标准用户 + PSEC 1.1 启动前零竞态封网**：三层架构（Layer-1 PSEC 1.1 创建器含内核态 `fs_enumerate` → Layer-2 纯 `KERNEL32.dll` 硬化守卫 → Layer-3 客户端多进程树），在 `ResumeThread` 前单事务安装并独立读回 4 条静态 `ALE_PACKAGE_ID` BLOCK WFP 规则；普通同账户/跨账户 6 视角句柄审计 `0` 违例。
-- **单端口代理与故障秒级断流**：A/B 各自仅放通独立回环端口 `127.0.0.1:Pa/Pb`（跨端口 `WSAEACCES 10013`），单空间断流与共享上游故障均在 `51ms–1392ms` 内完成断流且旧流不重放；主进程与派生子进程全协议（直连 TCP/UDP、`127.0.0.2`、QUIC、DoT、DoH、系统 DNS ETW）零旁路零泄露；宿主持续在线。
-- **真实官方 Claude Desktop 同桌面双空间实机验证**：两份真实官方 `claude.exe`（A `zh-CN / Asia/Shanghai`、B `en-US / America/Los_Angeles`）在 `WinSta0\Default` 同时并存两个可见 `Chrome_WidgetWin_1:Claude` 窗口（零单实例互斥冲突），共 12 个真实 Chromium/Electron 进程 100% 落入各自 AppContainer，冷启动代理命中 `0`、开例外后各自经专属口发起 `CONNECT claude.ai:443`、仅断 A 时 B 不受影响、全量 DNS ETW 代发为 `0`、`CoworkVMService` 未触发。
+- **内嵌双代理与看门狗秒级自动断流**：控制面内建 `EmbeddedDualProxyRelay`（A/B 各自独立 `127.0.0.1:Pa/Pb`，禁止子进程继承套接字句柄），上游故障时实测 **`569.5 ms`** 内并行撤除双方动态 WFP 例外并自动切入 `FaultCutoff`；主进程与派生子进程全协议（直连 TCP/UDP、`127.0.0.2`、QUIC、DoT、DoH、系统 DNS ETW）零旁路零泄露；宿主持续在线。
+- **控制面直驱真实官方 Claude Desktop 双空间（Phase 8 · 12/12 通过）**：`ClaudeStudioControlPlane.exe` 直接驱动两份真实官方 `claude.exe`（A `zh-CN / Asia/Shanghai`、B `en-US / America/Los_Angeles`）在 `WinSta0\Default` 同桌面并存两个可见 `Chrome_WidgetWin_1:Claude` 窗口、共 12 个真实进程全落各自 AppContainer，冷启动零命中、在线态各自路由 `CONNECT claude.ai:443`、单空间断网与共享上游自动断流均通过，全量 20 个观测 PID 的 DNS ETW 代发为 `0`、`CoworkVMService` 未触发。
 
 | 入口 | 用途 |
 | --- | --- |

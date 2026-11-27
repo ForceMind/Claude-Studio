@@ -74,7 +74,7 @@ namespace ClaudeStudio.ControlPlane {
 
         public MainWindow(StudioEngine studioEngine) {
             engine = studioEngine;
-            Title = "Claude Studio · 双空间沙盒控制面 (含高保真合成客户端适配器)";
+            Title = "Claude Studio · 双空间沙盒控制面 (" + engine.ModeLabel + ")";
             Width = 1040;
             Height = 760;
             MinWidth = 920;
@@ -546,8 +546,12 @@ namespace ClaudeStudio.ControlPlane {
                 ui.WfpText.Text = string.Format("WFP: StaticBlock={0} | DynamicE={1} | 权重={2} | 清单={3}",
                     snap.StaticBlockActive ? "ON(4)" : "OFF", snap.DynamicExceptionOpen ? "OPEN" : "CLOSED",
                     snap.WfpSublayerWeight, snap.WfpManifestSha256Prefix12);
-                ui.PortDnsText.Text = string.Format("专用入口: {0} | 系统 DNS 代发: {1} | PID: {2}",
-                    snap.ProxyPort > 0 ? ("127.0.0.1:" + snap.ProxyPort) : "(未分配)", snap.DnsSendCount, snap.Pid);
+                var pStats = engine.GetEmbeddedProxyStats(id);
+                string proxyExtra = pStats != null
+                    ? string.Format(" | 代理命中={0} (活跃隧道={1})", pStats.TotalConnections, pStats.ActiveTunnels)
+                    : "";
+                ui.PortDnsText.Text = string.Format("专用入口: {0}{1} | 系统 DNS 代发: {2} | PID: {3}",
+                    snap.ProxyPort > 0 ? ("127.0.0.1:" + snap.ProxyPort) : "(未分配)", proxyExtra, snap.DnsSendCount, snap.Pid);
                 ui.NoteText.Text = snap.LastNote;
             }
 
