@@ -189,6 +189,129 @@ namespace ClaudeStudio.ControlPlane {
             return realBk != null ? realBk.Relay.GetStats(id) : null;
         }
 
+        public bool DeliverOAuthCallback(SpaceId id, string rawCallbackUrl, out int dispatchedPid, out string message) {
+            dispatchedPid = 0;
+            string normalized; string valErr;
+            if (!OAuthCallbackRouter.ValidateAndSanitizeCallbackUrl(rawCallbackUrl, out normalized, out valErr)) {
+                message = valErr;
+                AddAudit("OAUTH_REJECT", id.ToString(), "Rejected OAuth callback: " + valErr);
+                Notify();
+                return false;
+            }
+            string redacted = OAuthCallbackRouter.BuildRedactedPreview(normalized);
+            if (IsSpaceStopped(id)) {
+                message = "Target Space " + id + " is stopped. Start the target space first before delivering its OAuth callback.";
+                AddAudit("OAUTH_REJECT", id.ToString(), "Target stopped; refused callback " + redacted);
+                Notify();
+                return false;
+            }
+            var realBk = liveBackend as RealDesktopPsecBackend;
+            if (realBk != null) {
+                bool ok = realBk.DeliverOAuthCallback(id, normalized, out dispatchedPid, out message);
+                AddAudit(ok ? "OAUTH_CALLBACK" : "OAUTH_FAILED", id.ToString(),
+                    string.Format("{0} -> {1}", redacted, message));
+                Notify();
+                return ok;
+            }
+            dispatchedPid = GetSnapshot(id).Pid;
+            message = string.Format("Preview validated & routed {0} to Space {1} (PID={2}, redacted in audit log).", redacted, id, dispatchedPid);
+            AddAudit("OAUTH_CALLBACK", id.ToString(), "Preview routed " + redacted + " (secrets redacted)");
+            Notify();
+            return true;
+        }
+
+        public LeaseOperationResult RegisterProjectAndSyncAcl(SpaceId space, string rawPath, ProjectAccessMode mode, out string aclNote) {
+            aclNote = "";
+            var r = leaseManager.RequestMount(space, rawPath, mode);
+            if (r.Ok) {
+                var realBk = liveBackend as RealDesktopPsecBackend;
+                if (realBk != null) {
+                    var all = leaseManager.ListProjects();
+                    SpaceId currentWriter = SpaceId.None;
+                    foreach (var p in all) {
+                        if (string.Equals(p.CanonicalPath, r.CanonicalPath, StringComparison.OrdinalIgnoreCase)) { currentWriter = p.WriterSpace; break; }
+                    }
+                    try {
+                        realBk.ApplyLiveProjectNtfsAndMounts(all, r.CanonicalPath, currentWriter, out aclNote);
+                        AddAudit("NTFS_ACL", space.ToString(), aclNote);
+                    } catch (Exception ex) {
+                        aclNote = "NTFS ACL sync failed: " + ex.Message;
+                        AddAudit("NTFS_ACL_ERR", space.ToString(), aclNote);
+                    }
+                }
+            }
+            Notify();
+            return r;
+        }
+
+        public LeaseOperationResult HandoffProjectWriterAndSyncAcl(string rawPath, SpaceId newWriter, out string aclNote) {
+            aclNote = "";
+            var r = leaseManager.ControlledHandoffWriter(rawPath, newWriter, IsSpaceStopped);
+            if (r.Ok) {
+                var realBk = liveBackend as RealDesktopPsecBackend;
+                if (realBk != null) {
+                    try {
+                        realBk.ApplyLiveProjectNtfsAndMounts(leaseManager.ListProjects(), r.CanonicalPath, newWriter, out aclNote);
+                        AddAudit("NTFS_HANDOFF", newWriter.ToString(), aclNote);
+                    } catch (Exception ex) {
+                        aclNote = "NTFS handoff ACL sync failed: " + ex.Message;
+                        AddAudit("NTFS_ACL_ERR", newWriter.ToString(), aclNote);
+                    }
+                }
+            }
+            Notify();
+            return r;
+        }
+
+        public StudioUserConfig ExportUserConfig(bool staticTemplateOptIn) {
+            lock (gate) {
+                var cfg = new StudioUserConfig {
+                    UpstreamHost = upstreamHost,
+                    UpstreamPort = (upstreamPort == ReservedHostProxyPort) ? 0 : upstreamPort,
+                    StaticTemplateSyncOptIn = staticTemplateOptIn,
+                    SpaceALanguage = configs[SpaceId.A].UiLanguage,
+                    SpaceATimezone = configs[SpaceId.A].RendererTimezone,
+                    SpaceBLanguage = configs[SpaceId.B].UiLanguage,
+                    SpaceBTimezone = configs[SpaceId.B].RendererTimezone
+                };
+                foreach (var p in leaseManager.ListProjects()) {
+                    cfg.Projects.Add(new PersistedProjectEntry {
+                        CanonicalPath = p.CanonicalPath,
+                        WriterSpace = p.WriterSpace.ToString(),
+                        SpaceAReadOnly = p.SpaceAReadOnly,
+                        SpaceBReadOnly = p.SpaceBReadOnly
+                    });
+                }
+                return cfg;
+            }
+        }
+
+        public void ApplyUserConfig(StudioUserConfig cfg, out string summary) {
+            summary = "No saved config loaded.";
+            if (cfg == null) return;
+            int restoredProjects = 0;
+            if (cfg.UpstreamPort > 0 && cfg.UpstreamPort != ReservedHostProxyPort && !string.IsNullOrWhiteSpace(cfg.UpstreamHost)) {
+                string err;
+                ConfigureUpstream(cfg.UpstreamHost, cfg.UpstreamPort, false, out err);
+            }
+            if (cfg.Projects != null) {
+                foreach (var p in cfg.Projects) {
+                    if (string.IsNullOrWhiteSpace(p.CanonicalPath) || !Directory.Exists(p.CanonicalPath)) continue;
+                    SpaceId writer;
+                    if (Enum.TryParse<SpaceId>(p.WriterSpace, out writer) && (writer == SpaceId.A || writer == SpaceId.B)) {
+                        var r = leaseManager.RequestMount(writer, p.CanonicalPath, ProjectAccessMode.ReadWrite);
+                        if (r.Ok) restoredProjects++;
+                    }
+                    if (p.SpaceAReadOnly) leaseManager.RequestMount(SpaceId.A, p.CanonicalPath, ProjectAccessMode.ReadOnly);
+                    if (p.SpaceBReadOnly) leaseManager.RequestMount(SpaceId.B, p.CanonicalPath, ProjectAccessMode.ReadOnly);
+                }
+            }
+            summary = string.Format("Loaded sanitized config (upstream={0}:{1}, projects={2}).",
+                upstreamHost, upstreamPort, restoredProjects);
+            AddAudit("CONFIG", "GLOBAL", summary);
+            Notify();
+        }
+
         public bool ConfigureUpstream(string host, int port, bool allowReserved10810, out string error) {
             error = null;
             if (string.IsNullOrWhiteSpace(host)) { error = "Upstream host cannot be empty."; return false; }

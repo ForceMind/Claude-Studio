@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -8,6 +9,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
 using Forms = System.Windows.Forms;
 using MediaBrushes = System.Windows.Media.Brushes;
 using MediaColor = System.Windows.Media.Color;
@@ -29,6 +31,7 @@ namespace ClaudeStudio.ControlPlane {
         readonly StudioEngine engine;
         Forms.NotifyIcon trayIcon;
         HwndSource hwndSource;
+        DispatcherTimer liveRefreshTimer;
         bool hotkeysRegistered;
         bool allowExit;
 
@@ -64,6 +67,8 @@ namespace ClaudeStudio.ControlPlane {
 
         TextBox localeMatrixBox;
         TextBox auditLogBox;
+        TextBox oauthUrlBox;
+        TextBlock oauthStatusText;
 
         static MediaBrush HexBrush(string hex) {
             var c = (MediaColor)System.Windows.Media.ColorConverter.ConvertFromString(hex);
@@ -92,6 +97,9 @@ namespace ClaudeStudio.ControlPlane {
             Closed += OnWindowClosed;
 
             SetupTrayIcon();
+            liveRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            liveRefreshTimer.Tick += (s, e) => RefreshTelemetryOnly();
+            liveRefreshTimer.Start();
             RefreshAllUi();
         }
 
@@ -152,6 +160,7 @@ namespace ClaudeStudio.ControlPlane {
         }
 
         void OnWindowClosed(object sender, EventArgs e) {
+            if (liveRefreshTimer != null) { liveRefreshTimer.Stop(); liveRefreshTimer = null; }
             if (hotkeysRegistered) {
                 var helper = new WindowInteropHelper(this);
                 UnregisterHotKey(helper.Handle, HOTKEY_SPACE_A);
@@ -215,8 +224,8 @@ namespace ClaudeStudio.ControlPlane {
                 Text = "上游代理：", VerticalAlignment = VerticalAlignment.Center,
                 Foreground = HexBrush("#CBD5E1"), FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 6, 0)
             });
-            upstreamHostBox = new TextBox { Text = "127.0.0.1", Width = 92, Padding = new Thickness(6, 4, 6, 4), Background = HexBrush("#0F172A"), Foreground = MediaBrushes.White, BorderBrush = HexBrush("#475569") };
-            upstreamPortBox = new TextBox { Text = "59100", Width = 62, Padding = new Thickness(6, 4, 6, 4), Margin = new Thickness(4, 0, 6, 0), Background = HexBrush("#0F172A"), Foreground = MediaBrushes.White, BorderBrush = HexBrush("#475569") };
+            upstreamHostBox = new TextBox { Text = string.IsNullOrWhiteSpace(engine.UpstreamHost) ? "127.0.0.1" : engine.UpstreamHost, Width = 92, Padding = new Thickness(6, 4, 6, 4), Background = HexBrush("#0F172A"), Foreground = MediaBrushes.White, BorderBrush = HexBrush("#475569") };
+            upstreamPortBox = new TextBox { Text = engine.UpstreamPort > 0 ? engine.UpstreamPort.ToString() : "59100", Width = 62, Padding = new Thickness(6, 4, 6, 4), Margin = new Thickness(4, 0, 6, 0), Background = HexBrush("#0F172A"), Foreground = MediaBrushes.White, BorderBrush = HexBrush("#475569") };
             left.Children.Add(upstreamHostBox);
             left.Children.Add(upstreamPortBox);
 
@@ -233,6 +242,24 @@ namespace ClaudeStudio.ControlPlane {
                 }
             };
             left.Children.Add(applyBtn);
+
+            var saveCfgBtn = MakeButton("保存配置", "#1E40AF", "#FFFFFF");
+            saveCfgBtn.Click += (s, e) => {
+                string err;
+                var cfg = engine.ExportUserConfig(templateOptInCheck != null && templateOptInCheck.IsChecked == true);
+                if (StudioConfigStore.Save(cfg, out err)) {
+                    MessageBox.Show("已保存脱敏配置（不含任何凭据或私有代理认证）：\n" + StudioConfigStore.DefaultConfigPath, "保存成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                } else {
+                    MessageBox.Show("保存失败：" + err, "配置保存拦截", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            };
+            left.Children.Add(saveCfgBtn);
+
+            if (!engine.IsLiveBackend) {
+                var liveLabBtn = MakeButton("实机双空间演练 (UAC)", "#0F766E", "#FFFFFF");
+                liveLabBtn.Click += (s, e) => LaunchEphemeralRealDesktopLab();
+                left.Children.Add(liveLabBtn);
+            }
 
             upstreamBadge = new TextBlock { Text = "● 上游未连通", Foreground = HexBrush("#F59E0B"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12, 0, 12, 0), FontWeight = FontWeights.SemiBold };
             left.Children.Add(upstreamBadge);
@@ -327,10 +354,79 @@ namespace ClaudeStudio.ControlPlane {
         TabControl BuildTabs() {
             var tabs = new TabControl { Background = HexBrush("#1E293B"), BorderBrush = HexBrush("#334155"), Foreground = MediaBrushes.White };
             tabs.Items.Add(new TabItem { Header = "项目单写者 & 静态模板", Content = BuildProjectsTab() });
+            tabs.Items.Add(new TabItem { Header = "OAuth 回调定向路由", Content = BuildOAuthCallbackTab() });
             tabs.Items.Add(new TabItem { Header = "纯文本 Handoff 抽屉", Content = BuildHandoffTab() });
             tabs.Items.Add(new TabItem { Header = "5 项语言/时区 & 脱敏诊断", Content = BuildDiagnosticsTab() });
             tabs.Items.Add(new TabItem { Header = "审计与回滚日志", Content = BuildAuditTab() });
             return tabs;
+        }
+
+        void LaunchEphemeralRealDesktopLab() {
+            string exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            string scriptPath = Path.GetFullPath(Path.Combine(exeDir, "..", "launch-ephemeral-real-desktop-gui.ps1"));
+            if (!File.Exists(scriptPath)) {
+                MessageBox.Show("未找到临时实机演练启动脚本：\n" + scriptPath, "未找到脚本", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            var confirm = MessageBox.Show(
+                "将通过 UAC 启动【临时双空间实机演练】模式：\n" +
+                "• 仅创建临时标准账户与官方 claude.exe 只读副本；\n" +
+                "• 不改动 WindowsApps、C:\\、桌面 ACL、宿主 Claude 资料或 10810 端口；\n" +
+                "• 默认零公网出站（仅本地测试上游），关闭窗口即 100% 自动删除账户与 WFP 规则。\n\n是否继续？",
+                "启动临时实机双空间演练", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes) return;
+            try {
+                string ps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+                Process.Start(new ProcessStartInfo {
+                    FileName = ps,
+                    Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + scriptPath + "\"",
+                    UseShellExecute = true
+                });
+            } catch (Exception ex) {
+                MessageBox.Show("启动失败：" + ex.Message, "启动异常", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        UIElement BuildOAuthCallbackTab() {
+            var stack = new StackPanel { Margin = new Thickness(12) };
+            var banner = new Border { Background = HexBrush("#1E3A5F"), CornerRadius = new CornerRadius(6), Padding = new Thickness(10, 8, 10, 8), Margin = new Thickness(0, 0, 0, 10) };
+            banner.Child = new TextBlock {
+                Text = "Windows 全局 claude:// 协议注册无法区分 Space A 与 Space B。请从浏览器复制完整 claude:// 回调地址，在此显式选择目标空间，控制面将在目标空间的精确 PSEC 1.1 容器内拉起回调承接进程（审计日志自动脱敏 code/state/token）。",
+                Foreground = HexBrush("#BFDBFE"), FontSize = 12, TextWrapping = TextWrapping.Wrap
+            };
+            stack.Children.Add(banner);
+
+            stack.Children.Add(new TextBlock { Text = "粘贴 claude:// 回调 URL：", Foreground = HexBrush("#CBD5E1"), FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 4) });
+            oauthUrlBox = new TextBox {
+                Text = "", Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 0, 0, 10),
+                Background = HexBrush("#0F172A"), Foreground = MediaBrushes.White, BorderBrush = HexBrush("#475569"),
+                FontFamily = new System.Windows.Media.FontFamily("Consolas"), FontSize = 12
+            };
+            stack.Children.Add(oauthUrlBox);
+
+            var btnRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+            var sendA = MakeButton("定向投递至 Space A 容器", "#2563EB", "#FFFFFF");
+            sendA.Click += (s, e) => DispatchOAuthTo(SpaceId.A);
+            var sendB = MakeButton("定向投递至 Space B 容器", "#D97706", "#FFFFFF");
+            sendB.Click += (s, e) => DispatchOAuthTo(SpaceId.B);
+            var clearBtn = MakeButton("清空输入", "#475569", "#FFFFFF");
+            clearBtn.Click += (s, e) => { oauthUrlBox.Text = ""; oauthStatusText.Text = ""; };
+            btnRow.Children.Add(sendA);
+            btnRow.Children.Add(sendB);
+            btnRow.Children.Add(clearBtn);
+            stack.Children.Add(btnRow);
+
+            oauthStatusText = new TextBlock { Foreground = HexBrush("#93C5FD"), FontSize = 12, TextWrapping = TextWrapping.Wrap };
+            stack.Children.Add(oauthStatusText);
+            return stack;
+        }
+
+        void DispatchOAuthTo(SpaceId id) {
+            int pid; string msg;
+            bool ok = engine.DeliverOAuthCallback(id, oauthUrlBox.Text, out pid, out msg);
+            oauthStatusText.Foreground = HexBrush(ok ? "#34D399" : "#F87171");
+            oauthStatusText.Text = string.Format("[{0}] {1}", ok ? "OK" : "BLOCKED", msg);
+            if (ok) oauthUrlBox.Text = "";
         }
 
         UIElement BuildProjectsTab() {
@@ -343,8 +439,9 @@ namespace ClaudeStudio.ControlPlane {
             var addBar = new DockPanel { Margin = new Thickness(0, 0, 0, 8) };
             var addBtn = MakeButton("注册并赋 Space A 写权", "#2563EB", "#FFFFFF");
             addBtn.Click += (s, e) => {
-                var r = engine.Leases.RequestMount(SpaceId.A, projectPathBox.Text, ProjectAccessMode.ReadWrite);
-                projectStatusText.Text = string.Format("[{0}] {1}", r.Code, r.Message);
+                string aclNote;
+                var r = engine.RegisterProjectAndSyncAcl(SpaceId.A, projectPathBox.Text, ProjectAccessMode.ReadWrite, out aclNote);
+                projectStatusText.Text = string.Format("[{0}] {1}{2}", r.Code, r.Message, string.IsNullOrEmpty(aclNote) ? "" : (" | " + aclNote));
                 RefreshAllUi();
             };
             DockPanel.SetDock(addBtn, Dock.Right);
@@ -367,25 +464,36 @@ namespace ClaudeStudio.ControlPlane {
             var opBar = new WrapPanel { Margin = new Thickness(0, 8, 0, 4) };
             var bRo = MakeButton("Space B 挂载只读", "#334155", "#FFFFFF");
             bRo.Click += (s, e) => {
-                var r = engine.Leases.RequestMount(SpaceId.B, projectPathBox.Text, ProjectAccessMode.ReadOnly);
-                projectStatusText.Text = string.Format("[{0}] {1}", r.Code, r.Message);
+                string aclNote;
+                var r = engine.RegisterProjectAndSyncAcl(SpaceId.B, projectPathBox.Text, ProjectAccessMode.ReadOnly, out aclNote);
+                projectStatusText.Text = string.Format("[{0}] {1}{2}", r.Code, r.Message, string.IsNullOrEmpty(aclNote) ? "" : (" | " + aclNote));
                 RefreshAllUi();
             };
             var bRwConflict = MakeButton("尝试并发给 B 写权 (冲突检测)", "#991B1B", "#FFFFFF");
             bRwConflict.Click += (s, e) => {
-                var r = engine.Leases.RequestMount(SpaceId.B, projectPathBox.Text, ProjectAccessMode.ReadWrite);
+                string aclNote;
+                var r = engine.RegisterProjectAndSyncAcl(SpaceId.B, projectPathBox.Text, ProjectAccessMode.ReadWrite, out aclNote);
                 projectStatusText.Text = string.Format("[{0}] {1}", r.Code, r.Message);
                 RefreshAllUi();
             };
             var handoffB = MakeButton("受控交接写权 → Space B", "#D97706", "#FFFFFF");
             handoffB.Click += (s, e) => {
-                var r = engine.Leases.ControlledHandoffWriter(projectPathBox.Text, SpaceId.B, engine.IsSpaceStopped);
-                projectStatusText.Text = string.Format("[{0}] {1}", r.Code, r.Message);
+                string aclNote;
+                var r = engine.HandoffProjectWriterAndSyncAcl(projectPathBox.Text, SpaceId.B, out aclNote);
+                projectStatusText.Text = string.Format("[{0}] {1}{2}", r.Code, r.Message, string.IsNullOrEmpty(aclNote) ? "" : (" | " + aclNote));
+                RefreshAllUi();
+            };
+            var handoffA = MakeButton("受控交接写权 → Space A", "#2563EB", "#FFFFFF");
+            handoffA.Click += (s, e) => {
+                string aclNote;
+                var r = engine.HandoffProjectWriterAndSyncAcl(projectPathBox.Text, SpaceId.A, out aclNote);
+                projectStatusText.Text = string.Format("[{0}] {1}{2}", r.Code, r.Message, string.IsNullOrEmpty(aclNote) ? "" : (" | " + aclNote));
                 RefreshAllUi();
             };
             opBar.Children.Add(bRo);
             opBar.Children.Add(bRwConflict);
             opBar.Children.Add(handoffB);
+            opBar.Children.Add(handoffA);
             projectStatusText = new TextBlock { Foreground = HexBrush("#93C5FD"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
             opBar.Children.Add(projectStatusText);
             Grid.SetRow(opBar, 2);
@@ -521,7 +629,7 @@ namespace ClaudeStudio.ControlPlane {
             };
         }
 
-        public void RefreshAllUi() {
+        public void RefreshTelemetryOnly() {
             upstreamBadge.Text = engine.UpstreamHealthy
                 ? string.Format("● 上游在线 ({0}:{1})", engine.UpstreamHost, engine.UpstreamPort)
                 : string.Format("● 上游离线 ({0}:{1})", engine.UpstreamHost, engine.UpstreamPort);
@@ -554,6 +662,10 @@ namespace ClaudeStudio.ControlPlane {
                     snap.ProxyPort > 0 ? ("127.0.0.1:" + snap.ProxyPort) : "(未分配)", proxyExtra, snap.DnsSendCount, snap.Pid);
                 ui.NoteText.Text = snap.LastNote;
             }
+        }
+
+        public void RefreshAllUi() {
+            RefreshTelemetryOnly();
 
             projectListBox.Items.Clear();
             foreach (var p in engine.Leases.ListProjects()) {

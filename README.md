@@ -9,11 +9,11 @@
 
 ## 最新进展与交接入口（2026-11-27）
 
-已完成 **Phase 0–Phase 8** 全部底层隔离引擎、纯 C# 内嵌双代理与自动断流看门狗、原生 WPF 控制面（含预编译原生辅助二进制）、高保真模拟客户端套件（`ClaudeDesktopTwin` + `ClaudeCliTwin`），以及 **控制面直驱两份真实官方 Claude Desktop (`v6.6395.0.0`) 双空间同桌面并行隔离与故障自动断流实机验收**（全程零真实账号、零改动宿主 `WindowsApps`/`C:\`/桌面 ACL/`10810`/系统 DNS，并全部 100% 回滚）：
+已完成 **Phase 0–Phase 9** 全部底层隔离引擎、纯 C# 内嵌双代理与自动断流看门狗、原生 WPF 控制面（含容器内 `claude://` OAuth 回调定向路由、脱敏配置持久化、实机 NTFS 单写者联动与一键临时实机双空间 GUI 演练入口）、高保真模拟客户端套件（`ClaudeDesktopTwin` + `ClaudeCliTwin`），以及 **控制面直驱两份真实官方 Claude Desktop (`v6.6395.0.0`) 双空间同桌面并行隔离、故障自动断流与容器内 OAuth 定向投递实机验收**（全程零真实账号、零改动宿主 `WindowsApps`/`C:\`/桌面 ACL/`10810`/系统 DNS，并全部 100% 回滚）：
 
-- **双标准用户 + PSEC 1.1 启动前零竞态封网**：三层架构（Layer-1 PSEC 1.1 创建器含内核态 `fs_enumerate` → Layer-2 纯 `KERNEL32.dll` 硬化守卫 → Layer-3 客户端多进程树），在 `ResumeThread` 前单事务安装并独立读回 4 条静态 `ALE_PACKAGE_ID` BLOCK WFP 规则；普通同账户/跨账户 6 视角句柄审计 `0` 违例。
+- **双标准用户 + PSEC 1.1 启动前零竞态封网**：三层架构（Layer-1 PSEC 1.1 创建器含内核态 `fs_enumerate` → Layer-2 纯 `KERNEL32.dll` 硬化守卫含原子回调投递 IPC → Layer-3 客户端多进程树），在 `ResumeThread` 前单事务安装并独立读回 4 条静态 `ALE_PACKAGE_ID` BLOCK WFP 规则；普通同账户/跨账户 6 视角句柄审计 `0` 违例。
 - **内嵌双代理与看门狗秒级自动断流**：控制面内建 `EmbeddedDualProxyRelay`（A/B 各自独立 `127.0.0.1:Pa/Pb`，禁止子进程继承套接字句柄），上游故障时实测 **`569.5 ms`** 内并行撤除双方动态 WFP 例外并自动切入 `FaultCutoff`；主进程与派生子进程全协议（直连 TCP/UDP、`127.0.0.2`、QUIC、DoT、DoH、系统 DNS ETW）零旁路零泄露；宿主持续在线。
-- **控制面直驱真实官方 Claude Desktop 双空间（Phase 8 · 12/12 通过）**：`ClaudeStudioControlPlane.exe` 直接驱动两份真实官方 `claude.exe`（A `zh-CN / Asia/Shanghai`、B `en-US / America/Los_Angeles`）在 `WinSta0\Default` 同桌面并存两个可见 `Chrome_WidgetWin_1:Claude` 窗口、共 12 个真实进程全落各自 AppContainer，冷启动零命中、在线态各自路由 `CONNECT claude.ai:443`、单空间断网与共享上游自动断流均通过，全量 20 个观测 PID 的 DNS ETW 代发为 `0`、`CoworkVMService` 未触发。
+- **控制面直驱真实官方 Claude Desktop 双空间与交互产品闭环（Phase 8 · 12/12 + Phase 9 · 10/10 通过）**：`ClaudeStudioControlPlane.exe` 直接驱动两份真实官方 `claude.exe`（A `zh-CN / Asia/Shanghai`、B `en-US / America/Los_Angeles`）在 `WinSta0\Default` 同桌面并存两个可见 `Chrome_WidgetWin_1:Claude` 窗口；支持经 Layer-2 守卫在目标空间精确 PSEC 容器内定向投递 `claude://` OAuth 回调（自动脱敏 `code`/`state`/`token`，零日志泄露）、实时 NTFS 单写者 ACL 与 PSEC 挂载表同步、脱敏配置持久化及一键临时实机双空间 GUI 演练（关闭窗口即 100% 回滚）。
 
 | 入口 | 用途 |
 | --- | --- |

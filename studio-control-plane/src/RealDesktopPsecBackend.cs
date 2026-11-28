@@ -49,6 +49,8 @@ namespace ClaudeStudio.ControlPlane {
             public int ProxyOwnerPid;
             public string L1StopFile;
             public string L2StopFile;
+            public string CallbackCmdFile;
+            public string CallbackAckFile;
             public string UserDataDir;
             public int ProxyPort;
         }
@@ -222,14 +224,17 @@ namespace ClaudeStudio.ControlPlane {
                 string readyPath = Path.Combine(scratchDir, "l1-ready.json");
                 sl.L1StopFile = Path.Combine(scratchDir, "l1-stop");
                 sl.L2StopFile = Path.Combine(scratchDir, "l2-stop");
-                foreach (string f in new[] { readyPath, sl.L1StopFile, sl.L2StopFile }) { if (File.Exists(f)) File.Delete(f); }
+                sl.CallbackCmdFile = Path.Combine(scratchDir, "oauth-callback.cmd");
+                sl.CallbackAckFile = Path.Combine(scratchDir, "oauth-callback.ack");
+                foreach (string f in new[] { readyPath, sl.L1StopFile, sl.L2StopFile, sl.CallbackCmdFile, sl.CallbackAckFile }) { if (File.Exists(f)) File.Delete(f); }
 
                 string extraFlags = sp.AppendElectronAppContainerFlags ? " --no-sandbox --disable-gpu-sandbox" : "";
                 string targetCmd = string.Format("\"{0}\" --user-data-dir=\"{1}\" --proxy-server=\"http://127.0.0.1:{2}\" --lang={3}{4}",
                     sp.TargetDesktopExe, userDataDir, sl.ProxyPort, sp.UiLanguage, extraFlags);
                 string l2Cfg = Path.Combine(sealedDir, "l2-desktop.cfg");
-                string cfgText = string.Format("e={0}\na={1}\ns={2}\nh={3}\nL={4}\nR={5}\nT={6}\nu={7}\np=http://127.0.0.1:{8}\ng={9}\nz={10}\n",
-                    sp.TargetDesktopExe, targetCmd, sl.L2StopFile, aHome, aLocal, aRoam, scratchDir, sp.AccountName, sl.ProxyPort, sp.EnvLang, sp.EnvTimezone);
+                string cfgText = string.Format("e={0}\na={1}\ns={2}\nh={3}\nL={4}\nR={5}\nT={6}\nu={7}\np=http://127.0.0.1:{8}\ng={9}\nz={10}\nc={11}\no={12}\n",
+                    sp.TargetDesktopExe, targetCmd, sl.L2StopFile, aHome, aLocal, aRoam, scratchDir, sp.AccountName, sl.ProxyPort, sp.EnvLang, sp.EnvTimezone,
+                    sl.CallbackCmdFile, sl.CallbackAckFile);
                 File.WriteAllText(l2Cfg, cfgText, new UTF8Encoding(false));
 
                 string l1Args = string.Format("\"{0}\" \"{1}\" \"{2}\" \"{3}\" \"{4}\" \"{5}\" \"{6}\"",
@@ -375,6 +380,86 @@ namespace ClaudeStudio.ControlPlane {
                 DnsBlocked = true,
                 RawJson = json.Serialize(st)
             };
+        }
+
+        // Dispatches a validated `claude://` OAuth callback inside the target space's EXACT PSEC 1.1 container
+        // by signaling the pure-KERNEL32 Layer-2 container guardian via atomic file handoff.
+        public bool DeliverOAuthCallback(SpaceId id, string validClaudeUrl, out int dispatchedPid, out string note) {
+            dispatchedPid = 0;
+            note = "";
+            lock (gate) {
+                var sl = slots[id];
+                var sp = sl.Spec;
+                if (sl.Layer1 == null || sl.Layer2Pid <= 0 || string.IsNullOrEmpty(sl.CallbackCmdFile)) {
+                    note = "Target space " + id + " is not running inside PSEC 1.1.";
+                    return false;
+                }
+                if (File.Exists(sl.CallbackAckFile)) { try { File.Delete(sl.CallbackAckFile); } catch { } }
+                if (File.Exists(sl.CallbackCmdFile)) { try { File.Delete(sl.CallbackCmdFile); } catch { } }
+
+                string extraFlags = sp.AppendElectronAppContainerFlags ? " --no-sandbox --disable-gpu-sandbox" : "";
+                string cbCmd = string.Format("\"{0}\" --user-data-dir=\"{1}\" --proxy-server=\"http://127.0.0.1:{2}\" --lang={3}{4} -- \"{5}\"",
+                    sp.TargetDesktopExe, sl.UserDataDir, sl.ProxyPort, sp.UiLanguage, extraFlags, validClaudeUrl);
+                string tmpCmd = sl.CallbackCmdFile + ".tmp";
+                File.WriteAllText(tmpCmd, cbCmd, new UTF8Encoding(false));
+                File.Move(tmpCmd, sl.CallbackCmdFile);
+
+                var sw = Stopwatch.StartNew();
+                while (!File.Exists(sl.CallbackAckFile) && sw.ElapsedMilliseconds < 4500) {
+                    Thread.Sleep(40);
+                }
+                if (!File.Exists(sl.CallbackAckFile)) {
+                    note = "Layer-2 guardian did not acknowledge OAuth callback within 4.5s.";
+                    return false;
+                }
+                string ackRaw = File.ReadAllText(sl.CallbackAckFile, Encoding.UTF8);
+                try { File.Delete(sl.CallbackAckFile); } catch { }
+                var ack = json.Deserialize<Dictionary<string, object>>(ackRaw);
+                bool ok = ack != null && ack.ContainsKey("dispatched") && Convert.ToBoolean(ack["dispatched"]);
+                if (ack != null && ack.ContainsKey("pid")) dispatchedPid = Convert.ToInt32(ack["pid"]);
+                int err = (ack != null && ack.ContainsKey("err")) ? Convert.ToInt32(ack["err"]) : 0;
+                if (!ok) {
+                    note = string.Format("Layer-2 failed to launch in-container callback helper (Win32 err={0}).", err);
+                    return false;
+                }
+                note = string.Format("Dispatched in-container callback into Space {0} (helperPID={1}, containerSid={2}).", id, dispatchedPid, sl.ContainerSid);
+                return true;
+            }
+        }
+
+        // Synchronizes NTFS single-writer ACLs and updates PSEC RW/RO directory lists for subsequent restarts.
+        public bool ApplyLiveProjectNtfsAndMounts(List<ProjectMountRecord> allProjects, string targetCanonicalPath, SpaceId writerSpace, out string note) {
+            note = "";
+            lock (gate) {
+                var spA = slots[SpaceId.A].Spec;
+                var spB = slots[SpaceId.B].Spec;
+                if (!string.IsNullOrWhiteSpace(targetCanonicalPath) && Directory.Exists(targetCanonicalPath)) {
+                    string writerSid = writerSpace == SpaceId.A ? spA.AccountSid : (writerSpace == SpaceId.B ? spB.AccountSid : null);
+                    string readerSid = writerSpace == SpaceId.A ? spB.AccountSid : (writerSpace == SpaceId.B ? spA.AccountSid : null);
+                    NtfsSingleWriterEnforcer.ApplySingleWriterAcl(targetCanonicalPath, spA.HostSid, writerSid, readerSid);
+                }
+
+                var rwA = new List<string>();
+                var roA = new List<string>();
+                var rwB = new List<string>();
+                var roB = new List<string>();
+                if (allProjects != null) {
+                    foreach (var p in allProjects) {
+                        if (string.IsNullOrWhiteSpace(p.CanonicalPath) || !Directory.Exists(p.CanonicalPath)) continue;
+                        if (p.WriterSpace == SpaceId.A) rwA.Add(p.CanonicalPath);
+                        else if (p.SpaceAReadOnly) roA.Add(p.CanonicalPath);
+                        if (p.WriterSpace == SpaceId.B) rwB.Add(p.CanonicalPath);
+                        else if (p.SpaceBReadOnly) roB.Add(p.CanonicalPath);
+                    }
+                }
+                spA.ExtraReadWriteDirs = rwA.ToArray();
+                spA.ExtraReadOnlyDirs = roA.ToArray();
+                spB.ExtraReadWriteDirs = rwB.ToArray();
+                spB.ExtraReadOnlyDirs = roB.ToArray();
+                note = string.Format("Applied NTFS single-writer ACL (Writer={0}) & synced PSEC mount tables (A:rw={1}/ro={2}, B:rw={3}/ro={4}).",
+                    writerSpace, rwA.Count, roA.Count, rwB.Count, roB.Count);
+                return true;
+            }
         }
 
         public bool StopAndRollback(SpaceId id, out string note) {

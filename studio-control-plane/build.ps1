@@ -23,6 +23,8 @@ $sources = @(
     (Join-Path $srcDir 'ControlPlaneModels.cs'),
     (Join-Path $srcDir 'ProjectLeaseManager.cs'),
     (Join-Path $srcDir 'HandoffGenerator.cs'),
+    (Join-Path $srcDir 'OAuthCallbackRouter.cs'),
+    (Join-Path $srcDir 'StudioConfig.cs'),
     (Join-Path $srcDir 'ClientAdapter.cs'),
     (Join-Path $srcDir 'EmbeddedProxyRelay.cs'),
     (Join-Path $srcDir 'NtfsSingleWriterEnforcer.cs'),

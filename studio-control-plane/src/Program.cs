@@ -15,7 +15,20 @@ namespace ClaudeStudio.ControlPlane {
             if (args != null && args.Length >= 2 && string.Equals(args[0], "--self-test", StringComparison.OrdinalIgnoreCase)) {
                 return RunSelfTest(args[1]);
             }
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--live-ephemeral-lab", StringComparison.OrdinalIgnoreCase)) {
+                string scriptPath = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "launch-ephemeral-real-desktop-gui.ps1"));
+                if (!File.Exists(scriptPath)) {
+                    MessageBox.Show("Missing launcher script: " + scriptPath, "Claude Studio", MessageBoxButton.OK, MessageBoxImage.Error);
+                    return 2;
+                }
+                string ps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
+                Process.Start(new ProcessStartInfo { FileName = ps, Arguments = "-NoProfile -ExecutionPolicy Bypass -File \"" + scriptPath + "\"", UseShellExecute = true });
+                return 0;
+            }
             using (var engine = new StudioEngine()) {
+                var saved = StudioConfigStore.Load();
+                string cfgSummary;
+                engine.ApplyUserConfig(saved, out cfgSummary);
                 var app = new Application();
                 var win = new MainWindow(engine);
                 app.Run(win);
@@ -127,12 +140,38 @@ namespace ClaudeStudio.ControlPlane {
                         brief.Contains("README.md") &&
                         brief.Contains("Completed Phase 5 engine");
 
-                    // 7. Live WPF MainWindow Construction, Measure/Arrange Render Smoke & Tray/Hotkey Lifecycle
+                    // 7. Phase 9 OAuth Callback Router Validation & Secret Redaction + Config Persistence Round-Trip
+                    int cbPid; string cbMsg;
+                    bool rejScheme = !engine.DeliverOAuthCallback(SpaceId.B, "https://evil.example/cb?code=1", out cbPid, out cbMsg);
+                    bool rejQuote = !engine.DeliverOAuthCallback(SpaceId.B, "claude://auth?code=a\"b", out cbPid, out cbMsg);
+                    bool rejStoppedA = !engine.DeliverOAuthCallback(SpaceId.A, "claude://auth/callback?code=SECRET_A_999&state=STATE_A", out cbPid, out cbMsg);
+                    bool okLiveB = engine.DeliverOAuthCallback(SpaceId.B, "claude://auth/callback?code=SECRET_B_777&state=STATE_B", out cbPid, out cbMsg);
+                    bool auditSecretLeaked = false;
+                    foreach (var logItem in engine.GetAuditLog()) {
+                        if (logItem.Message.IndexOf("SECRET_B_777", StringComparison.Ordinal) >= 0 ||
+                            logItem.Message.IndexOf("STATE_B", StringComparison.Ordinal) >= 0) {
+                            auditSecretLeaked = true;
+                        }
+                    }
+                    checks["oauthCallbackValidationAndSecretRedaction"] = rejScheme && rejQuote && rejStoppedA && okLiveB && !auditSecretLeaked;
+
+                    string cfgTempPath = Path.Combine(tempRoot, "studio-config.json");
+                    string cfgErr;
+                    var badCfg10810 = new StudioUserConfig { UpstreamHost = "127.0.0.1", UpstreamPort = 10810 };
+                    bool blockedSave10810 = !StudioConfigStore.Save(badCfg10810, out cfgErr, cfgTempPath);
+                    var exportedCfg = engine.ExportUserConfig(false);
+                    bool savedOk = StudioConfigStore.Save(exportedCfg, out cfgErr, cfgTempPath);
+                    var loadedCfg = StudioConfigStore.Load(cfgTempPath);
+                    checks["sanitizedConfigPersistenceRoundTrip"] = blockedSave10810 && savedOk &&
+                        (loadedCfg.UpstreamPort == upPort) && (loadedCfg.Projects.Count == 1) && !loadedCfg.StaticTemplateSyncOptIn;
+
+                    // 8. Live WPF MainWindow Construction, Measure/Arrange Render Smoke & Tray/Hotkey/Timer Lifecycle
                     var win = new MainWindow(engine);
                     win.ShowActivated = false;
                     win.Left = -20000; // Render off-screen cleanly without stealing user focus
                     win.Show();
                     win.UpdateLayout();
+                    win.RefreshTelemetryOnly();
                     bool wpfRendered = (win.ActualWidth >= 900) && (win.ActualHeight >= 600);
                     win.ExitCleanly();
                     checks["wpfWindowAndTrayLifecycleClean"] = wpfRendered;
